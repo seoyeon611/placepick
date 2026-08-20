@@ -64,18 +64,24 @@ async function searchPlacesFromKakao(query, size = 15) {
 // ---- 실제 데이터 가져오기 ----
 export async function fetchAllPlaces() {
   // 1) Firestore에 이미 데이터가 있으면 그걸 사용 (빠르고, 우리가 관리하는 데이터)
+  // Firestore 연결/조회 중 뭔가 실패해도(방금 만든 프로젝트라 반영 지연 등) 앱이 멈추지 않고
+  // 아래 2번(카카오 실시간 검색)으로 자연스럽게 넘어가도록 이 부분도 감싸줌
   if (isConfigured) {
-    const db = await getDb();
-    if (db) {
-      const { collection, getDocs } = await import("firebase/firestore");
-      const snapshot = await getDocs(collection(db, "places"));
-      if (!snapshot.empty) {
-        return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    try {
+      const db = await getDb();
+      if (db) {
+        const { collection, getDocs } = await import("firebase/firestore");
+        const snapshot = await getDocs(collection(db, "places"));
+        if (!snapshot.empty) {
+          return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        }
       }
+    } catch (err) {
+      console.warn("Firestore 조회 실패, 카카오 실시간 검색으로 대체합니다:", err);
     }
   }
 
-  // 2) Firestore가 비어있거나 미설정 상태면, 카카오 로컬 API로 실제 데이터를 바로 가져와서 보여줌
+  // 2) Firestore가 비어있거나 미설정/실패 상태면, 카카오 로컬 API로 실제 데이터를 바로 가져와서 보여줌
   try {
     const raw = await searchPlacesFromKakao("서울 맛집", 15);
     return raw.map((p, i) => enrichPlace(p, i));
