@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { fetchAllPlaces, addUserPlace } from "./placesService.js";
+import { fetchAllPlaces, addUserPlace, searchPlacesByName } from "./placesService.js";
 
 /**
  * 플레이스픽(PlacePick) — 통합 앱 (최종본)
@@ -2385,7 +2385,13 @@ function ResultsListScreen({ items, onBack, onSelectPlace }) {
 
 // ---- 식당 상세 페이지 ----
 function RestaurantDetailScreen({ place, onBack, onOpenSave, onOpenReserve, showToast }) {
-  const detail = { ...RESTAURANT_DETAIL_TEMPLATE, rating: place?.rating ?? RESTAURANT_DETAIL_TEMPLATE.rating };
+  const detail = {
+    ...RESTAURANT_DETAIL_TEMPLATE,
+    name: place?.name ?? RESTAURANT_DETAIL_TEMPLATE.name,
+    category: place?.category ?? RESTAURANT_DETAIL_TEMPLATE.category,
+    rating: place?.rating ?? RESTAURANT_DETAIL_TEMPLATE.rating,
+    address: place?.address ?? RESTAURANT_DETAIL_TEMPLATE.address,
+  };
   return (
     <>
       <div style={s.header}>
@@ -2535,7 +2541,7 @@ function ReservationSheet({ onClose, onComplete, showToast }) {
     <div style={s.sheetOverlay} onClick={onClose}>
       <div style={{ ...s.actionSheet, maxHeight: "85%", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div style={s.sheetHandle} />
-        <div style={s.reservationHeaderRow}>
+        <div style={s.reservationSheetHeaderRow}>
           <p style={s.sheetTitle}>예약 정보 설정</p>
           <button type="button" style={s.sheetCloseBtn} onClick={onClose} aria-label="닫기">
             <CloseIcon size={18} />
@@ -2543,7 +2549,7 @@ function ReservationSheet({ onClose, onComplete, showToast }) {
         </div>
 
         <div style={{ padding: "0 20px" }}>
-          <p style={s.reservationLabel}>방문 인원</p>
+          <p style={s.reservationFieldLabel}>방문 인원</p>
           <div style={s.guestCountRow}>
             <i className="ti ti-user" style={{ fontSize: 15, color: "#8A8A8A" }} />
             <span style={{ fontSize: 12.5, flex: 1 }}>성인 및 아동</span>
@@ -2557,7 +2563,7 @@ function ReservationSheet({ onClose, onComplete, showToast }) {
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18 }}>
-            <p style={s.reservationLabel}>예약 날짜</p>
+            <p style={s.reservationFieldLabel}>예약 날짜</p>
             <span style={{ fontSize: 11, color: "#8A8A8A" }}>2026년 5월</span>
           </div>
           <div style={s.calendarGrid}>
@@ -2581,7 +2587,7 @@ function ReservationSheet({ onClose, onComplete, showToast }) {
             ))}
           </div>
 
-          <p style={{ ...s.reservationLabel, marginTop: 18 }}>예약 시간</p>
+          <p style={{ ...s.reservationFieldLabel, marginTop: 18 }}>예약 시간</p>
           <div style={s.timeSlotGrid}>
             {RESERVATION_TIME_SLOTS.map((t) => (
               <button
@@ -2818,9 +2824,11 @@ function UploadShellConsumer({ children }) {
 }
 
 function UploadInitScreen({ onNext }) {
-  const [method, setMethod] = useState("gallery");
   const [linkValue, setLinkValue] = useState("");
   const [photos, setPhotos] = useState([]); // { id, file, url }
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState(null); // null = 검색 전
+  const [searching, setSearching] = useState(false);
   const fileInputRef = useRef(null);
 
   const handleFilesChosen = (e) => {
@@ -2842,104 +2850,161 @@ function UploadInitScreen({ onNext }) {
     });
   };
 
-  const handleUpload = (showToast) => {
-    if (method === "link") {
-      if (!linkValue.trim()) {
-        showToast("링크를 입력해주세요.");
-        return;
-      }
-      onNext([{ type: "link", value: linkValue }]);
-      return;
-    }
-    if (photos.length === 0) {
-      showToast("추가할 장소의 사진을 선택해주세요.");
-      return;
-    }
-    onNext(photos.map((p) => ({ type: "photo", file: p.file, url: p.url })));
-  };
-
   return (
     <UploadShellConsumer>
-      {({ showToast, onOpenMenu }) => (
-        <>
-          <div style={s.header}>
-            <button type="button" style={s.iconButton} onClick={onOpenMenu} aria-label="메뉴">
-              <HamburgerIcon />
-            </button>
-            <span style={s.headerTitle}>업로드</span>
-            <button type="button" style={s.iconButton} aria-label="알림">
-              <BellIcon />
-            </button>
-          </div>
-          <div style={s.uploadBody}>
-            <p style={s.uploadIntroText}>
-              나만의 맛집을 <b>저장하고 관리해보세요!</b>
-            </p>
-            <div style={s.methodRow}>
-              <button type="button" style={method === "gallery" ? s.methodBtnActive : s.methodBtn} onClick={() => setMethod("gallery")}>
-                <i className="ti ti-photo" style={{ fontSize: 20 }} />
-                <span style={s.methodLabel}>갤러리</span>
+      {({ showToast, onOpenMenu }) => {
+        const handleSearch = async () => {
+          if (!searchQuery.trim()) {
+            showToast("식당명 또는 카페명을 입력해주세요.");
+            return;
+          }
+          setSearching(true);
+          try {
+            const results = await searchPlacesByName(searchQuery.trim());
+            setSearchResults(results);
+            if (results.length === 0) showToast("검색 결과가 없어요.");
+          } catch (err) {
+            showToast(err.message || "검색에 실패했어요.");
+          } finally {
+            setSearching(false);
+          }
+        };
+
+        const handlePickSearchResult = (place) => {
+          // 이미 이름/주소가 확실한 데이터라 사진 읽기 단계 없이 바로 정보확인으로
+          onNext([{ type: "searched", data: place }]);
+        };
+
+        const handlePhotosUpload = () => {
+          if (photos.length === 0) {
+            fileInputRef.current?.click();
+            return;
+          }
+          onNext(photos.map((p) => ({ type: "photo", file: p.file, url: p.url })));
+        };
+
+        const handleLinkExtract = () => {
+          if (!linkValue.trim()) {
+            showToast("링크를 입력해주세요.");
+            return;
+          }
+          onNext([{ type: "link", value: linkValue }]);
+        };
+
+        return (
+          <>
+            <div style={s.header}>
+              <button type="button" style={s.iconButton} onClick={onOpenMenu} aria-label="메뉴">
+                <HamburgerIcon />
               </button>
-              <button type="button" style={method === "file" ? s.methodBtnActive : s.methodBtn} onClick={() => setMethod("file")}>
-                <i className="ti ti-file" style={{ fontSize: 20 }} />
-                <span style={s.methodLabel}>파일</span>
-              </button>
-              <button type="button" style={method === "link" ? s.methodBtnActive : s.methodBtn} onClick={() => setMethod("link")}>
-                <i className="ti ti-link" style={{ fontSize: 20 }} />
-                <span style={s.methodLabel}>링크</span>
-              </button>
-            </div>
-            {method === "link" ? (
-              <div style={{ marginTop: 20 }}>
-                <p style={s.selectLabel}>공유받은 링크를 붙여넣어주세요.</p>
-                <input type="text" placeholder="https://..." value={linkValue} onChange={(e) => setLinkValue(e.target.value)} style={s.linkInput} />
+              <span style={s.headerTitle}>PlacePick</span>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button type="button" style={s.iconButton} aria-label="설정">
+                  <i className="ti ti-settings" style={{ fontSize: 20 }} />
+                </button>
+                <button type="button" style={s.iconButton} aria-label="알림">
+                  <BellIcon />
+                </button>
               </div>
-            ) : (
-              <>
-                <div style={s.selectRow}>
-                  <p style={s.selectLabel}>추가할 장소를 선택해주세요.</p>
-                  <span style={s.selectCount}>{photos.length}장 선택됨</span>
+            </div>
+
+            <div style={s.archiveBody}>
+              <p style={s.archiveTitle}>맛집 아카이브</p>
+              <p style={s.archiveSubtitle}>식당명 검색 또는 이미지/링크 업로드로 맛집을 저장하세요.</p>
+
+              <p style={s.archiveSectionLabel}>식당 검색</p>
+              <div style={s.archiveSearchRow}>
+                <div style={s.archiveSearchInputWrap}>
+                  <i className="ti ti-search" style={{ fontSize: 15, color: "#B0B0B0" }} />
+                  <input
+                    type="text"
+                    placeholder="식당명 또는 카페명을 입력하세요."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    style={s.archiveSearchInput}
+                  />
                 </div>
+                <button type="button" style={s.archiveSearchBtn} onClick={handleSearch} disabled={searching}>
+                  {searching ? "검색중" : "검색"}
+                </button>
+              </div>
 
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  capture={method === "gallery" ? undefined : undefined}
-                  onChange={handleFilesChosen}
-                  style={{ display: "none" }}
-                />
-
-                <div style={s.photoGrid}>
-                  <button type="button" style={s.cameraCell} onClick={() => fileInputRef.current?.click()} aria-label="사진 선택하기">
-                    <i className="ti ti-plus" style={{ fontSize: 22, color: "#B4B2A9" }} />
-                  </button>
-                  {photos.map((p) => (
-                    <div key={p.id} style={{ ...s.photoCell, borderColor: "#1A1A1A", padding: 0, overflow: "hidden" }}>
-                      <img src={p.url} alt="선택한 사진" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                      <button
-                        type="button"
-                        onClick={() => removePhoto(p.id)}
-                        style={s.photoRemoveBadge}
-                        aria-label="사진 제거"
-                      >
-                        <CloseIcon size={11} color="#FFFFFF" />
-                      </button>
-                    </div>
+              {searchResults && (
+                <div style={s.archiveResultList}>
+                  {searchResults.map((place) => (
+                    <button key={place.id} type="button" style={s.archiveResultItem} onClick={() => handlePickSearchResult(place)}>
+                      <div>
+                        <p style={s.archiveResultName}>{place.name}</p>
+                        <p style={s.archiveResultAddress}>{place.address}</p>
+                      </div>
+                      <i className="ti ti-plus" style={{ fontSize: 16, color: "#8A8A8A" }} />
+                    </button>
                   ))}
                 </div>
-                <p style={s.photoHint}>기기 갤러리에서 식당 캡처/사진을 직접 선택할 수 있어요.</p>
-              </>
-            )}
-          </div>
-          <div style={s.footer}>
-            <button type="button" onClick={() => handleUpload(showToast)} style={s.primaryButton}>
-              업로드
-            </button>
-          </div>
-        </>
-      )}
+              )}
+
+              <div style={s.archiveDividerRow}>
+                <div style={s.archiveDividerLine} />
+                <span style={s.archiveDividerText}>또는 이미지/링크 스캔</span>
+                <div style={s.archiveDividerLine} />
+              </div>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleFilesChosen}
+                style={{ display: "none" }}
+              />
+
+              {photos.length === 0 ? (
+                <button type="button" style={s.archiveImageBox} onClick={() => fileInputRef.current?.click()}>
+                  <div style={s.archiveImageIconCircle}>
+                    <i className="ti ti-photo" style={{ fontSize: 20, color: "#8A8A8A" }} />
+                  </div>
+                  <p style={s.archiveImageBoxTitle}>이미지 업로드</p>
+                  <p style={s.archiveImageBoxSub}>인스타그램, 블로그 캡쳐 등</p>
+                </button>
+              ) : (
+                <div style={s.archiveImageBox}>
+                  <div style={s.photoGrid}>
+                    <button type="button" style={s.cameraCell} onClick={() => fileInputRef.current?.click()} aria-label="사진 추가">
+                      <i className="ti ti-plus" style={{ fontSize: 20, color: "#B4B2A9" }} />
+                    </button>
+                    {photos.map((p) => (
+                      <div key={p.id} style={{ ...s.photoCell, borderColor: "#1A1A1A", padding: 0, overflow: "hidden" }}>
+                        <img src={p.url} alt="선택한 사진" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                        <button type="button" onClick={() => removePhoto(p.id)} style={s.photoRemoveBadge} aria-label="사진 제거">
+                          <CloseIcon size={11} color="#FFFFFF" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" style={s.archiveImageUploadBtn} onClick={handlePhotosUpload}>
+                    {photos.length}장 업로드하기
+                  </button>
+                </div>
+              )}
+
+              <div style={s.archiveLinkRow}>
+                <i className="ti ti-link" style={{ fontSize: 15, color: "#B0B0B0" }} />
+                <input
+                  type="text"
+                  placeholder="URL 링크 붙여넣기"
+                  value={linkValue}
+                  onChange={(e) => setLinkValue(e.target.value)}
+                  style={s.archiveLinkInput}
+                />
+                <button type="button" style={s.archiveExtractBtn} onClick={handleLinkExtract}>
+                  추출
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      }}
     </UploadShellConsumer>
   );
 }
@@ -3210,7 +3275,23 @@ function UploadTab({ showToast, showConfirm, onLogout }) {
           <UploadInitScreen
             onNext={(items) => {
               setSelectedItems(items);
-              setStep("confirm");
+              if (items[0]?.type === "searched") {
+                // 식당 검색으로 고른 경우: 이미 이름/주소가 확실하니 사진 확인/읽기 단계 없이 바로 정보확인으로
+                const p = items[0].data;
+                setExtractedItems([
+                  {
+                    name: p.name,
+                    category: p.category,
+                    price: p.price ? `${p.price.toLocaleString()}원 대` : "",
+                    address: p.address,
+                    hours: "매장 문의 필요 (검색 데이터에는 영업시간 정보가 없어요)",
+                    url: null,
+                  },
+                ]);
+                setStep("infoConfirm");
+              } else {
+                setStep("confirm");
+              }
             }}
           />
         )}
@@ -3233,7 +3314,7 @@ function UploadTab({ showToast, showConfirm, onLogout }) {
         {step === "infoConfirm" && (
           <InfoConfirmScreen
             items={extractedItems}
-            onBack={() => setStep("confirm")}
+            onBack={() => setStep(selectedItems[0]?.type === "searched" ? "init" : "confirm")}
             onSave={(data) => {
               setSavedNewItems(data);
               setStep("done");
@@ -3447,7 +3528,7 @@ function FoldersListScreen({ folders, viewMode, onToggleViewMode, onOpenFolder, 
 }
 
 // ---- 폴더 상세(안에 저장된 장소 목록) ----
-function FolderDetailScreen({ folder, onBack, editMode, onToggleEdit, onDeleteItems, showConfirm, showToast }) {
+function FolderDetailScreen({ folder, onBack, editMode, onToggleEdit, onDeleteItems, onSelectItem, showConfirm, showToast }) {
   const [selectedIds, setSelectedIds] = useState([]);
 
   useEffect(() => {
@@ -3495,7 +3576,7 @@ function FolderDetailScreen({ folder, onBack, editMode, onToggleEdit, onDeleteIt
               key={item.id}
               type="button"
               style={s.folderDetailRow}
-              onClick={() => (editMode ? toggleSelect(item.id) : undefined)}
+              onClick={() => (editMode ? toggleSelect(item.id) : onSelectItem(item))}
             >
               {editMode && (
                 <span style={selected ? s.folderSelectCircleActive : s.folderSelectCircle}>
@@ -3509,6 +3590,7 @@ function FolderDetailScreen({ folder, onBack, editMode, onToggleEdit, onDeleteIt
                 <p style={s.folderDetailItemName}>{item.name}</p>
                 <p style={s.folderDetailItemCategory}>{item.category}</p>
               </div>
+              {!editMode && <i className="ti ti-chevron-right" style={{ fontSize: 15, color: "#C4C2B8" }} />}
             </button>
           );
         })}
@@ -3533,6 +3615,11 @@ function SavedTab({ showToast, showConfirm }) {
   const [addFolderOpen, setAddFolderOpen] = useState(false);
   const [folderListEditMode, setFolderListEditMode] = useState(false);
   const [selectedFolderIds, setSelectedFolderIds] = useState([]);
+  const [selectedPlace, setSelectedPlace] = useState(null);
+  const [saveSheetOpen, setSaveSheetOpen] = useState(false);
+  const [reserveSheetOpen, setReserveSheetOpen] = useState(false);
+  const [lastReservation, setLastReservation] = useState(null);
+  const [showReservationConfirm, setShowReservationConfirm] = useState(false);
 
   const openFolder = folders.find((f) => f.id === openFolderId) || null;
 
@@ -3576,7 +3663,30 @@ function SavedTab({ showToast, showConfirm }) {
 
   return (
     <>
-      {!openFolder ? (
+      {showReservationConfirm ? (
+        <ReservationConfirmScreen
+          reservation={lastReservation}
+          place={selectedPlace}
+          onClose={() => setShowReservationConfirm(false)}
+          onGoMap={() => {
+            showToast("지도 화면으로 이동합니다.");
+            setShowReservationConfirm(false);
+            setSelectedPlace(null);
+          }}
+          onGoReservations={() => {
+            setShowReservationConfirm(false);
+            setSelectedPlace(null);
+          }}
+        />
+      ) : selectedPlace ? (
+        <RestaurantDetailScreen
+          place={selectedPlace}
+          onBack={() => setSelectedPlace(null)}
+          onOpenSave={() => setSaveSheetOpen(true)}
+          onOpenReserve={() => setReserveSheetOpen(true)}
+          showToast={showToast}
+        />
+      ) : !openFolder ? (
         <FoldersListScreen
           folders={folders}
           viewMode={viewMode}
@@ -3602,18 +3712,41 @@ function SavedTab({ showToast, showConfirm }) {
           editMode={editMode}
           onToggleEdit={() => setEditMode((v) => !v)}
           onDeleteItems={handleDeleteItems}
+          onSelectItem={setSelectedPlace}
           showConfirm={showConfirm}
           showToast={showToast}
         />
       )}
       <AddFolderModal open={addFolderOpen} onSave={handleAddFolder} onCancel={() => setAddFolderOpen(false)} />
+      {saveSheetOpen && (
+        <SaveToCollectionSheet
+          onClose={() => setSaveSheetOpen(false)}
+          showToast={showToast}
+          onSaved={(collectionName) => {
+            setSaveSheetOpen(false);
+            showToast(`"${collectionName}"에 저장했어요.`);
+          }}
+        />
+      )}
+      {reserveSheetOpen && (
+        <ReservationSheet
+          onClose={() => setReserveSheetOpen(false)}
+          showToast={showToast}
+          onComplete={(reservation) => {
+            addReservationToStorage({ reservation, placeName: selectedPlace?.name || "플레이스픽 다이닝" });
+            setLastReservation(reservation);
+            setReserveSheetOpen(false);
+            setShowReservationConfirm(true);
+          }}
+        />
+      )}
     </>
   );
 }
 
-function PlaceCard({ place }) {
+function PlaceCard({ place, onClick }) {
   return (
-    <div style={s.placeCard}>
+    <button type="button" onClick={onClick} style={{ ...s.placeCard, width: "100%", border: "none", cursor: onClick ? "pointer" : "default", textAlign: "left" }}>
       <div style={s.placeThumb}>
         <i className="ti ti-photo-x" style={{ fontSize: 18, color: "#B4B2A9" }} />
       </div>
@@ -3629,11 +3762,11 @@ function PlaceCard({ place }) {
           {place.reviewCount ? `(${place.reviewCount})` : ""}
         </span>
       </div>
-    </div>
+    </button>
   );
 }
 
-function ReservationGroup({ group, onCancel }) {
+function ReservationGroup({ group, onCancel, onSelectPlace }) {
   if (group.cancelled) {
     return (
       <div style={s.reservationGroupCancelled}>
@@ -3657,7 +3790,7 @@ function ReservationGroup({ group, onCancel }) {
       {group.items.map((item, i) => (
         <div key={i} style={s.reservationItem}>
           <span style={s.reservationTime}>{item.time}</span>
-          <PlaceCard place={item} />
+          <PlaceCard place={item} onClick={() => onSelectPlace(item)} />
         </div>
       ))}
     </div>
@@ -3672,6 +3805,7 @@ function ReservationTab({ showToast, showConfirm }) {
   const [sortDesc, setSortDesc] = useState(true);
   const [reserveSheetOpen, setReserveSheetOpen] = useState(false);
   const [confirmScreenData, setConfirmScreenData] = useState(null);
+  const [selectedPlace, setSelectedPlace] = useState(null);
 
   const handleCancel = (target) => {
     showConfirm({
@@ -3707,6 +3841,18 @@ function ReservationTab({ showToast, showConfirm }) {
     );
   }
 
+  if (selectedPlace) {
+    return (
+      <RestaurantDetailScreen
+        place={selectedPlace}
+        onBack={() => setSelectedPlace(null)}
+        onOpenSave={() => showToast("저장 화면은 저장/예약 탭의 저장 쪽에서 이용해주세요.")}
+        onOpenReserve={() => setReserveSheetOpen(true)}
+        showToast={showToast}
+      />
+    );
+  }
+
   return (
     <>
       <div style={s.sortRow}>
@@ -3716,7 +3862,7 @@ function ReservationTab({ showToast, showConfirm }) {
       </div>
       <div style={s.scrollBody}>
         {groups.map((group) => (
-          <ReservationGroup key={group.id} group={group} onCancel={handleCancel} />
+          <ReservationGroup key={group.id} group={group} onCancel={handleCancel} onSelectPlace={setSelectedPlace} />
         ))}
       </div>
       <div style={s.reservationFooter}>
@@ -4325,6 +4471,114 @@ const s = {
 
   uploadBody: { flex: 1, padding: "16px 18px 0", overflowY: "auto" },
   uploadIntroText: { fontSize: 15.5, lineHeight: 1.5, margin: "0 0 18px", color: "#1A1A1A" },
+
+  archiveBody: { flex: 1, padding: "16px 20px 24px", overflowY: "auto" },
+  archiveTitle: { fontSize: 18, fontWeight: 700, margin: "0 0 4px" },
+  archiveSubtitle: { fontSize: 12, color: "#8A8A8A", margin: "0 0 20px" },
+  archiveSectionLabel: { fontSize: 11.5, fontWeight: 700, color: "#8A8A8A", margin: "0 0 8px" },
+  archiveSearchRow: { display: "flex", gap: 8, marginBottom: 20 },
+  archiveSearchInputWrap: {
+    flex: 1,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    height: 42,
+    padding: "0 12px",
+    border: "1px solid #DADADA",
+    borderRadius: 8,
+    boxSizing: "border-box",
+  },
+  archiveSearchInput: { flex: 1, border: "none", outline: "none", fontSize: 12.5, background: "transparent" },
+  archiveSearchBtn: {
+    width: 56,
+    height: 42,
+    borderRadius: 8,
+    border: "none",
+    background: "#EF9F27",
+    color: "#FFFFFF",
+    fontSize: 12.5,
+    fontWeight: 700,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  archiveResultList: { marginBottom: 20, border: "1px solid #EDEDED", borderRadius: 8, overflow: "hidden" },
+  archiveResultItem: {
+    width: "100%",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "10px 12px",
+    background: "#FFFFFF",
+    border: "none",
+    borderBottom: "1px solid #F5F5F5",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  archiveResultName: { fontSize: 12.5, fontWeight: 600, margin: "0 0 2px" },
+  archiveResultAddress: { fontSize: 10.5, color: "#8A8A8A", margin: 0 },
+  archiveDividerRow: { display: "flex", alignItems: "center", gap: 10, margin: "4px 0 20px" },
+  archiveDividerLine: { flex: 1, height: 1, background: "#EDEDED" },
+  archiveDividerText: { fontSize: 10.5, color: "#B0B0B0", whiteSpace: "nowrap" },
+  archiveImageBox: {
+    width: "100%",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 8,
+    padding: "26px 16px",
+    border: "1.5px dashed #DADADA",
+    borderRadius: 12,
+    background: "#FAFAF8",
+    cursor: "pointer",
+    marginBottom: 16,
+    boxSizing: "border-box",
+  },
+  archiveImageIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: "50%",
+    background: "#F0EFEA",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  archiveImageBoxTitle: { fontSize: 13, fontWeight: 700, margin: 0 },
+  archiveImageBoxSub: { fontSize: 10.5, color: "#B0B0B0", margin: 0 },
+  archiveImageUploadBtn: {
+    width: "100%",
+    height: 40,
+    marginTop: 10,
+    borderRadius: 8,
+    border: "none",
+    background: "#1A1A1A",
+    color: "#FFFFFF",
+    fontSize: 12.5,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  archiveLinkRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    height: 44,
+    padding: "0 12px",
+    border: "1px solid #DADADA",
+    borderRadius: 8,
+    boxSizing: "border-box",
+  },
+  archiveLinkInput: { flex: 1, border: "none", outline: "none", fontSize: 12.5, background: "transparent" },
+  archiveExtractBtn: {
+    padding: "7px 12px",
+    borderRadius: 6,
+    border: "1px solid #DADADA",
+    background: "#FFFFFF",
+    color: "#3A3A3A",
+    fontSize: 11.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+
   methodRow: { display: "flex", gap: 10 },
   methodBtn: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "12px 0", border: "1px solid #E5E5E5", borderRadius: 10, background: "#FAFAF8", color: "#8A8A8A", cursor: "pointer" },
   methodBtnActive: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "12px 0", border: "1px solid #1A1A1A", borderRadius: 10, background: "#1A1A1A", color: "#FFFFFF", cursor: "pointer" },
@@ -4705,8 +4959,8 @@ const s = {
     justifyContent: "center",
   },
 
-  reservationHeaderRow: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px" },
-  reservationLabel: { fontSize: 12.5, fontWeight: 700, margin: "0 0 8px" },
+  reservationSheetHeaderRow: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px" },
+  reservationFieldLabel: { fontSize: 12.5, fontWeight: 700, margin: "0 0 8px" },
   guestCountRow: {
     display: "flex",
     alignItems: "center",
