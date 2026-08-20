@@ -210,9 +210,12 @@ async function extractPlaceInfo(photo, index) {
   // 실제로 AI 분석이 되려면 Vercel에 배포하고 OPENAI_API_KEY 환경변수를 등록해야 합니다.
   if (photo?.file) {
     try {
-      const formData = new FormData();
-      formData.append("image", photo.file);
-      const res = await fetch("/api/analyze-place-image", { method: "POST", body: formData });
+      const imageBase64 = await fileToBase64(photo.file);
+      const res = await fetch("/api/analyze-place-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64, mimeType: photo.file.type || "image/jpeg" }),
+      });
       if (res.ok) {
         const data = await res.json();
         if (data && !data.error) return data;
@@ -225,6 +228,20 @@ async function extractPlaceInfo(photo, index) {
 
   await new Promise((r) => setTimeout(r, 1200));
   return { ...MOCK_EXTRACT_POOL[index % MOCK_EXTRACT_POOL.length] };
+}
+
+// 파일을 base64 문자열(데이터 URL 접두어 제외)로 변환
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result || "";
+      const base64 = String(result).split(",")[1] || "";
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 async function savePlaces(items) {
   // 사용자가 업로드해서 확인한 장소들을 실제 DB(Firestore)의 "places" 컬렉션에 저장.
