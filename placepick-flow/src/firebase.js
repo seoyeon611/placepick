@@ -8,12 +8,12 @@
 // 자세한 단계별 가이드는 firebase-integration.md 참고
 
 const firebaseConfig = {
-  apiKey: "YOUR_FIREBASE_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID",
+  apiKey: "AIzaSyADKmX2cj6dA8LGWPDLmjcnGJodAObEsuo",
+  authDomain: "placepick1.firebaseapp.com",
+  projectId: "placepick1",
+  storageBucket: "placepick1.firebasestorage.app",
+  messagingSenderId: "316429010849",
+  appId: "1:316429010849:web:d31c5521252368a4b8ade0",
 };
 
 // 설정을 아직 안 채워넣었으면(YOUR_로 시작하면) Firebase를 초기화하지 않고,
