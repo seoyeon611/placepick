@@ -16,19 +16,23 @@ const firebaseConfig = {
   appId: "YOUR_APP_ID",
 };
 
-// 설정을 아직 안 채워넣었으면(YOUR_로 시작하면) Firebase를 초기화하지 않고
-// null을 내보내서, 앱이 자동으로 mock 데이터로 계속 동작하게 합니다.
-const isConfigured = !firebaseConfig.apiKey.startsWith("YOUR_");
+// 설정을 아직 안 채워넣었으면(YOUR_로 시작하면) Firebase를 초기화하지 않고,
+// 앱이 자동으로 mock/카카오 데이터로 계속 동작하게 합니다.
+export const isConfigured = !firebaseConfig.apiKey.startsWith("YOUR_");
 
-let app = null;
-let db = null;
+// 최상위(top-level) await는 일부 빌드 환경에서 문제가 될 수 있어서,
+// 필요할 때 호출해서 쓰는 함수 형태로 만들었습니다.
+let dbPromise = null;
 
-if (isConfigured) {
-  // 동적 import로 필요할 때만 로드 (설정 안 됐을 때 불필요한 에러 방지)
-  const { initializeApp } = await import("firebase/app");
-  const { getFirestore } = await import("firebase/firestore");
-  app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
+export function getDb() {
+  if (!isConfigured) return Promise.resolve(null);
+  if (!dbPromise) {
+    dbPromise = Promise.all([import("firebase/app"), import("firebase/firestore")]).then(
+      ([{ initializeApp }, { getFirestore }]) => {
+        const app = initializeApp(firebaseConfig);
+        return getFirestore(app);
+      }
+    );
+  }
+  return dbPromise;
 }
-
-export { app, db, isConfigured };

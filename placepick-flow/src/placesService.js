@@ -7,7 +7,7 @@
 //   4) seedPlacesFromKakao()를 실행하면, 여러 지역/카테고리로 실제 데이터를 모아서
 //      Firestore에 저장 — 이후부터는 2번 경로(Firestore)로 빠르게 응답
 
-import { db, isConfigured } from "./firebase.js";
+import { getDb, isConfigured } from "./firebase.js";
 
 const SEOUL_DISTRICTS = [
   "강남구", "강동구", "강북구", "강서구", "관악구", "광진구", "구로구", "금천구", "노원구", "도봉구",
@@ -36,7 +36,7 @@ function enrichPlace(place, idx) {
   return {
     ...place,
     rating: place.rating ?? rating,
-    openNow: true, // 카카오 로컬 API는 실시간 영업 여부를 안 줌 (place_url로 실제 확인 유도)
+    openNow: idx % 4 !== 3, // 카카오 로컬 API는 실시간 영업 여부를 안 줘서 데모용으로 다양하게 섞음 (4곳 중 3곳은 영업중)
     priceLevel: price < 15000 ? "$" : price < 35000 ? "$$" : "$$$",
     price,
     reviewCount: (idx * 47) % 500,
@@ -64,11 +64,14 @@ async function searchPlacesFromKakao(query, size = 15) {
 // ---- 실제 데이터 가져오기 ----
 export async function fetchAllPlaces() {
   // 1) Firestore에 이미 데이터가 있으면 그걸 사용 (빠르고, 우리가 관리하는 데이터)
-  if (isConfigured && db) {
-    const { collection, getDocs } = await import("firebase/firestore");
-    const snapshot = await getDocs(collection(db, "places"));
-    if (!snapshot.empty) {
-      return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  if (isConfigured) {
+    const db = await getDb();
+    if (db) {
+      const { collection, getDocs } = await import("firebase/firestore");
+      const snapshot = await getDocs(collection(db, "places"));
+      if (!snapshot.empty) {
+        return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      }
     }
   }
 
@@ -85,7 +88,12 @@ export async function fetchAllPlaces() {
 // ---- 여러 지역/카테고리로 실제 데이터를 모아서 Firestore에 저장 ----
 // 브라우저 콘솔에서: seedPlacesFromKakao()
 export async function seedPlacesFromKakao() {
-  if (!isConfigured || !db) {
+  if (!isConfigured) {
+    console.warn("Firebase가 설정되어 있지 않아요. src/firebase.js에 먼저 실제 설정값을 넣어주세요.");
+    return;
+  }
+  const db = await getDb();
+  if (!db) {
     console.warn("Firebase가 설정되어 있지 않아요. src/firebase.js에 먼저 실제 설정값을 넣어주세요.");
     return;
   }
@@ -117,6 +125,12 @@ export async function seedPlacesFromKakao() {
   console.log(`카카오 로컬 API로 실제 장소 ${savedCount}곳을 Firestore에 저장했어요.`);
 }
 
+// ---- 식당 이름으로 직접 검색 (업로드 화면의 "식당 검색") ----
+export async function searchPlacesByName(query) {
+  const raw = await searchPlacesFromKakao(query, 10);
+  return raw.map((p, i) => enrichPlace(p, i));
+}
+
 if (typeof window !== "undefined") {
   window.seedPlacesFromKakao = seedPlacesFromKakao;
 }
@@ -140,7 +154,12 @@ export async function addUserPlace(extractedData) {
     idx
   );
 
-  if (!isConfigured || !db) {
+  if (!isConfigured) {
+    console.warn("Firebase가 설정되어 있지 않아서, 이 장소는 실제 DB에는 저장되지 않고 화면에만 반영돼요.");
+    return place;
+  }
+  const db = await getDb();
+  if (!db) {
     console.warn("Firebase가 설정되어 있지 않아서, 이 장소는 실제 DB에는 저장되지 않고 화면에만 반영돼요.");
     return place;
   }
@@ -152,6 +171,7 @@ export async function addUserPlace(extractedData) {
 }
 
 function extractDistrictFromAddress(address) {
-  const match = address?.match(/([가-힣]+구)/);
-  return match ? match[1] : "";
+  if (!address) return "";
+  const parts = address.trim().split(/\s+/);
+  return parts[1] || "";
 }
