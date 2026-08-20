@@ -77,6 +77,40 @@ function addReservationToStorage({ reservation, placeName }) {
   return newGroup;
 }
 
+// 다른 화면(홈 탭 등)에서 저장/예약 탭이 리액트 상태를 공유하지 않고도
+// "저장" 폴더에 실제로 선택한 장소를 추가할 수 있게 해주는 공용 함수.
+// (저장/예약 탭도 같은 localStorage 키 "placepick_folders"를 씀)
+function addPlaceToFolderStorage(folderName, place) {
+  const FOLDERS_KEY = "placepick_folders";
+  let folders = [];
+  try {
+    const raw = window.localStorage.getItem(FOLDERS_KEY);
+    folders = raw ? JSON.parse(raw) : [];
+  } catch (err) {
+    console.warn("폴더 목록 읽기 실패:", err);
+  }
+
+  const newItem = {
+    id: `p-${Date.now()}`,
+    name: place?.name || place?.displayName || "저장한 장소",
+    category: place?.category || "",
+  };
+
+  const idx = folders.findIndex((f) => f.name === folderName);
+  if (idx >= 0) {
+    folders = folders.map((f, i) => (i === idx ? { ...f, items: [newItem, ...(f.items || [])] } : f));
+  } else {
+    folders = [...folders, { id: `f-${Date.now()}`, name: folderName, items: [newItem] }];
+  }
+
+  try {
+    window.localStorage.setItem(FOLDERS_KEY, JSON.stringify(folders));
+  } catch (err) {
+    console.warn("폴더 저장 실패:", err);
+  }
+  return newItem;
+}
+
 // ============================================================
 // 서버 연동 지점 (지금은 localStorage 기반 mock, 실제로는 백엔드 API로 교체하세요)
 // ============================================================
@@ -2792,6 +2826,7 @@ function HomeTab({ showToast, showConfirm, onGoToReservations, onLogout }) {
           onClose={() => setSaveSheetOpen(false)}
           showToast={showToast}
           onSaved={(collectionName) => {
+            addPlaceToFolderStorage(collectionName, selectedPlace);
             setSaveSheetOpen(false);
             showToast(`"${collectionName}"에 저장했어요.`);
           }}
@@ -3740,6 +3775,20 @@ function SavedTab({ showToast, showConfirm }) {
           onClose={() => setSaveSheetOpen(false)}
           showToast={showToast}
           onSaved={(collectionName) => {
+            addPlaceToFolderStorage(collectionName, selectedPlace);
+            // 저장/예약 탭 안에서 저장한 경우, 새로고침 없이도 목록에 바로 반영되도록
+            setFolders((prev) => {
+              const newItem = {
+                id: `p-${Date.now()}`,
+                name: selectedPlace?.name || selectedPlace?.displayName || "저장한 장소",
+                category: selectedPlace?.category || "",
+              };
+              const idx = prev.findIndex((f) => f.name === collectionName);
+              if (idx >= 0) {
+                return prev.map((f, i) => (i === idx ? { ...f, items: [newItem, ...(f.items || [])] } : f));
+              }
+              return [...prev, { id: `f-${Date.now()}`, name: collectionName, items: [newItem] }];
+            });
             setSaveSheetOpen(false);
             showToast(`"${collectionName}"에 저장했어요.`);
           }}
