@@ -271,7 +271,7 @@ async function extractPlaceInfo(item, index, showToast) {
       }
       if (res.ok) {
         const data = await res.json();
-        if (data && !data.error) return data;
+        if (data && !data.error) return { ...data, aiAnalyzed: true };
         notify(`[AI분석 실패] ${data?.error || "알 수 없는 오류"} → 임시 데이터로 대체`);
       } else {
         const errBody = await res.json().catch(() => ({}));
@@ -287,7 +287,7 @@ async function extractPlaceInfo(item, index, showToast) {
   }
 
   await new Promise((r) => setTimeout(r, 1200));
-  return { ...MOCK_EXTRACT_POOL[index % MOCK_EXTRACT_POOL.length] };
+  return { ...MOCK_EXTRACT_POOL[index % MOCK_EXTRACT_POOL.length], aiAnalyzed: false };
 }
 
 // 파일을 base64 문자열(데이터 URL 접두어 제외)로 변환
@@ -1513,7 +1513,6 @@ const RESTAURANT_DETAIL_TEMPLATE = {
 
 const RESERVATION_TIME_SLOTS = ["오전 11:00", "오전 11:30", "오후 12:00", "오후 12:30", "오후 01:00", "오후 01:30", "오후 02:00", "오후 02:30", "오후 03:00"];
 
-const MOCK_COLLECTIONS_FOR_SAVE = ["가보고 싶은 곳", "데이트 맛집", "혼밥 아카이브", "카페 투어"];
 
 const MENU_ITEMS = [
   { key: "contact", label: "문의하기", icon: "ti-help-circle" },
@@ -2691,6 +2690,7 @@ function RestaurantDetailScreen({ place, onBack, onOpenSave, onOpenReserve, show
     category: place?.category ?? RESTAURANT_DETAIL_TEMPLATE.category,
     rating: place?.rating ?? RESTAURANT_DETAIL_TEMPLATE.rating,
     address: place?.address ?? RESTAURANT_DETAIL_TEMPLATE.address,
+    hours: place?.hours || RESTAURANT_DETAIL_TEMPLATE.hours,
   };
   return (
     <>
@@ -2703,10 +2703,25 @@ function RestaurantDetailScreen({ place, onBack, onOpenSave, onOpenReserve, show
       </div>
       <div style={{ flex: 1, overflowY: "auto" }}>
         <div style={s.detailImageBox}>
-          <i className="ti ti-photo-x" style={{ fontSize: 40, color: "#C4C2B8" }} />
+          {place?.photoUrl ? (
+            <img src={place.photoUrl} alt={detail.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ) : (
+            <i className="ti ti-photo-x" style={{ fontSize: 40, color: "#C4C2B8" }} />
+          )}
           <span style={s.detailImageCounter}>1/{detail.imageCount}</span>
+          {place?.aiAnalyzed && (
+            <span style={s.aiAnalyzedBadge}>
+              <i className="ti ti-sparkles" style={{ fontSize: 12 }} /> AI 분석 완료
+            </span>
+          )}
         </div>
         <div style={{ padding: "14px 20px 0" }}>
+          {place?.aiAnalyzed && (
+            <div style={s.aiBadgeRow}>
+              <i className="ti ti-sparkles" style={{ fontSize: 13, color: "#EF9F27" }} />
+              <span>업로드한 사진을 AI가 분석해서 등록된 정보예요</span>
+            </div>
+          )}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 17, fontWeight: 700 }}>{detail.name}</span>
             <span style={{ fontSize: 13, fontWeight: 600 }}>
@@ -2779,42 +2794,71 @@ function RestaurantDetailScreen({ place, onBack, onOpenSave, onOpenReserve, show
 }
 
 // ---- 저장한다면? (컬렉션 선택 바텀시트) ----
-function SaveToCollectionSheet({ onClose, onSaved, showToast }) {
+function SaveToCollectionSheet({ onClose, onSaved, showToast, fullScreen }) {
+  const [folders] = useLocalStorageState("placepick_folders", INITIAL_FOLDERS);
   const [selectedCollection, setSelectedCollection] = useState(null);
+  const [addingNew, setAddingNew] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const folderNames = folders.map((f) => f.name);
 
   const handleSave = () => {
-    if (!selectedCollection) {
-      showToast("저장할 컬렉션을 선택해주세요.");
+    const name = addingNew ? newFolderName.trim() : selectedCollection;
+    if (!name) {
+      showToast(addingNew ? "새 폴더 이름을 입력해주세요." : "저장할 폴더를 선택해주세요.");
       return;
     }
-    onSaved(selectedCollection);
+    onSaved(name);
   };
+
+  const body = (
+    <>
+      <div style={{ padding: "4px 20px 0" }}>
+        {folderNames.length === 0 && !addingNew && <p style={s.emptyText}>아직 만든 폴더가 없어요. 새 폴더를 만들어보세요.</p>}
+        {!addingNew &&
+          folderNames.map((name) => (
+            <button key={name} type="button" style={s.collectionRadioRow} onClick={() => setSelectedCollection(name)}>
+              <span style={{ fontSize: 13.5 }}>{name}</span>
+              <span style={{ ...s.radioCircle, ...(selectedCollection === name ? s.radioCircleActive : {}) }} />
+            </button>
+          ))}
+        {addingNew ? (
+          <input
+            type="text"
+            autoFocus
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            placeholder="새 폴더 이름"
+            style={{ ...s.editInput, marginTop: 10 }}
+          />
+        ) : (
+          <button type="button" style={s.addCollectionBtn} onClick={() => setAddingNew(true)}>
+            <i className="ti ti-plus" style={{ fontSize: 16 }} /> 새 폴더 만들기
+          </button>
+        )}
+      </div>
+      <div style={{ padding: "16px 20px 6px" }}>
+        <button type="button" style={s.primaryButton} onClick={handleSave}>
+          저장하기
+        </button>
+      </div>
+    </>
+  );
+
+  if (fullScreen) {
+    return (
+      <>
+        <SubScreenHeader title="저장할 폴더 선택" onBack={onClose} />
+        {body}
+      </>
+    );
+  }
 
   return (
     <div style={s.sheetOverlay} onClick={onClose}>
       <div style={s.actionSheet} onClick={(e) => e.stopPropagation()}>
         <div style={s.sheetHandle} />
         <p style={s.sheetTitle}>저장한다면?</p>
-        <div style={{ padding: "4px 20px 0" }}>
-          {MOCK_COLLECTIONS_FOR_SAVE.map((name) => (
-            <button key={name} type="button" style={s.collectionRadioRow} onClick={() => setSelectedCollection(name)}>
-              <span style={{ fontSize: 13.5 }}>{name}</span>
-              <span style={{ ...s.radioCircle, ...(selectedCollection === name ? s.radioCircleActive : {}) }} />
-            </button>
-          ))}
-          <button
-            type="button"
-            style={s.addCollectionBtn}
-            onClick={() => showToast("새 컬렉션 만들기는 준비 중이에요.")}
-          >
-            <i className="ti ti-plus" style={{ fontSize: 16 }} />
-          </button>
-        </div>
-        <div style={{ padding: "16px 20px 6px" }}>
-          <button type="button" style={s.primaryButton} onClick={handleSave}>
-            저장하기
-          </button>
-        </div>
+        {body}
       </div>
     </div>
   );
@@ -3389,8 +3433,8 @@ function InfoConfirmScreen({ items, onBack, onSave }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await savePlaces(data);
-      onSave(data);
+      const result = await savePlaces(data);
+      onSave(result.items);
     } finally {
       setSaving(false);
     }
@@ -3412,6 +3456,12 @@ function InfoConfirmScreen({ items, onBack, onSave }) {
             <i className="ti ti-pencil" style={{ fontSize: 16 }} />
           </button>
         </div>
+        {current.aiAnalyzed && (
+          <div style={s.aiBadgeRow}>
+            <i className="ti ti-sparkles" style={{ fontSize: 13, color: "#EF9F27" }} />
+            <span>AI가 사진을 분석해서 알아낸 정보예요</span>
+          </div>
+        )}
         <div style={s.previewImageBox}>
           {current.url ? (
             <img src={current.url} alt="선택한 사진" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8 }} />
@@ -3465,7 +3515,7 @@ const PRESET_SAVED = [
   { name: "한강 바베큐", category: "바베큐", address: "서울 영등포구 여의도동 45", hours: "매일 11:00 ~ 22:00" },
 ];
 
-function SavedDoneScreen({ newItems, onAddMore }) {
+function SavedDoneScreen({ newItems, onSelectPlace, onAddMore }) {
   const [list, setList] = useLocalStorageState("placepick_uploaded_places", PRESET_SAVED);
 
   // newItems(방금 업로드 완료한 항목)는 화면 진입 시 한 번만 저장 목록에 합칩니다.
@@ -3477,6 +3527,8 @@ function SavedDoneScreen({ newItems, onAddMore }) {
   }, []);
 
   const handleDelete = (i) => setList((prev) => prev.filter((_, idx) => idx !== i));
+  const justSaved = newItems && newItems.length > 0 ? newItems[0] : null;
+
   return (
     <>
       <div style={s.header}>
@@ -3492,6 +3544,14 @@ function SavedDoneScreen({ newItems, onAddMore }) {
           <p style={s.doneTitle}>저장 완료</p>
           <p style={s.doneSubtitle}>선택한 맛집이 저장되었습니다.</p>
         </div>
+        {justSaved && (
+          <button type="button" style={s.viewDetailBtn} onClick={() => onSelectPlace(justSaved)}>
+            <span>
+              <b>{justSaved.name}</b> 상세 페이지 보기
+            </span>
+            <i className="ti ti-chevron-right" style={{ fontSize: 15 }} />
+          </button>
+        )}
         <div style={s.listTitleRow}>
           <span style={s.listTitle}>저장 리스트</span>
           <span style={s.listActions}>
@@ -3501,7 +3561,7 @@ function SavedDoneScreen({ newItems, onAddMore }) {
         </div>
         <div style={s.savedList}>
           {list.map((item, i) => (
-            <div key={i} style={s.savedRow}>
+            <button key={i} type="button" style={{ ...s.savedRow, width: "100%", border: "none", background: "none", cursor: "pointer", textAlign: "left" }} onClick={() => onSelectPlace(item)}>
               <div style={{ flex: 1 }}>
                 <p style={s.savedName}>{item.name}</p>
                 <p style={s.savedCategory}>{item.category}</p>
@@ -3512,10 +3572,18 @@ function SavedDoneScreen({ newItems, onAddMore }) {
                   <i className="ti ti-calendar" style={{ fontSize: 11 }} /> {item.hours}
                 </p>
               </div>
-              <button type="button" style={s.deleteBtn} onClick={() => handleDelete(i)} aria-label="삭제">
+              <button
+                type="button"
+                style={s.deleteBtn}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDelete(i);
+                }}
+                aria-label="삭제"
+              >
                 <CloseIcon size={14} />
               </button>
-            </div>
+            </button>
           ))}
         </div>
       </div>
@@ -3535,6 +3603,8 @@ function UploadTab({ showToast, showConfirm, onLogout }) {
   const [savedNewItems, setSavedNewItems] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [subScreen, setSubScreen] = useState(null); // null | "settings" | "contact" | "notice" | "profile"
+  const [selectedPlace, setSelectedPlace] = useState(null);
+  const [saveSheetOpen, setSaveSheetOpen] = useState(false);
 
   if (subScreen) {
     return (
@@ -3565,6 +3635,32 @@ function UploadTab({ showToast, showConfirm, onLogout }) {
             onBack={() => {
               setSubScreen(null);
               setMenuOpen(true);
+            }}
+          />
+        )}
+      </>
+    );
+  }
+
+
+  if (selectedPlace) {
+    return (
+      <>
+        <RestaurantDetailScreen
+          place={selectedPlace}
+          onBack={() => setSelectedPlace(null)}
+          onOpenSave={() => setSaveSheetOpen(true)}
+          onOpenReserve={() => showToast("저장/예약 탭에서 예약할 수 있어요.")}
+          showToast={showToast}
+        />
+        {saveSheetOpen && (
+          <SaveToCollectionSheet
+            onClose={() => setSaveSheetOpen(false)}
+            showToast={showToast}
+            onSaved={(collectionName) => {
+              addPlaceToFolderStorage(collectionName, selectedPlace);
+              setSaveSheetOpen(false);
+              showToast(`"${collectionName}"에 저장했어요.`);
             }}
           />
         )}
@@ -3622,6 +3718,18 @@ function UploadTab({ showToast, showConfirm, onLogout }) {
             onBack={() => setStep(selectedItems[0]?.type === "searched" ? "init" : "confirm")}
             onSave={(data) => {
               setSavedNewItems(data);
+              setStep("chooseFolder");
+            }}
+          />
+        )}
+        {step === "chooseFolder" && (
+          <SaveToCollectionSheet
+            fullScreen
+            onClose={() => setStep("done")}
+            showToast={showToast}
+            onSaved={(collectionName) => {
+              savedNewItems.forEach((item) => addPlaceToFolderStorage(collectionName, item));
+              showToast(`"${collectionName}"에 저장했어요.`);
               setStep("done");
             }}
           />
@@ -3629,6 +3737,7 @@ function UploadTab({ showToast, showConfirm, onLogout }) {
         {step === "done" && (
           <SavedDoneScreen
             newItems={savedNewItems}
+            onSelectPlace={setSelectedPlace}
             onAddMore={() => {
               setSelectedItems([]);
               setExtractedItems([]);
@@ -4927,6 +5036,20 @@ const s = {
   doneIconWrap: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "10px 0 20px" },
   doneTitle: { fontSize: 15, fontWeight: 700, margin: 0 },
   doneSubtitle: { fontSize: 12, color: "#8A8A8A", margin: 0 },
+  viewDetailBtn: {
+    width: "100%",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "13px 16px",
+    marginBottom: 18,
+    borderRadius: 10,
+    border: "1px solid #1A1A1A",
+    background: "#1A1A1A",
+    color: "#FFFFFF",
+    fontSize: 13,
+    cursor: "pointer",
+  },
   listTitleRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   listTitle: { fontSize: 13, fontWeight: 700 },
   listActions: { display: "flex", gap: 10, color: "#8A8A8A" },
@@ -5160,6 +5283,32 @@ const s = {
     background: "rgba(0,0,0,0.5)",
     padding: "2px 8px",
     borderRadius: 10,
+  },
+  aiAnalyzedBadge: {
+    position: "absolute",
+    left: 10,
+    top: 10,
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    fontSize: 10.5,
+    fontWeight: 700,
+    color: "#FFFFFF",
+    background: "rgba(239,159,39,0.92)",
+    padding: "4px 9px",
+    borderRadius: 12,
+  },
+  aiBadgeRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    fontSize: 11.5,
+    color: "#B8791A",
+    background: "#FFF7EC",
+    border: "1px solid #F5DFB8",
+    borderRadius: 8,
+    padding: "8px 10px",
+    marginBottom: 10,
   },
   detailMetaRow: { fontSize: 11.5, color: "#8A8A8A", display: "flex", alignItems: "center", gap: 5, margin: "5px 0" },
   detailActionRow: { display: "flex", gap: 8, marginTop: 14 },
