@@ -1925,27 +1925,33 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
                     else if (region1.includes("경기")) matchedTab = "경기";
                     else if (region1.includes("인천")) matchedTab = "인천";
 
-                    if (matchedTab && REGION_DISTRICTS[matchedTab]?.includes(region2)) {
+                    // 카카오가 "안산시 단원구"처럼 더 세분화된 이름을 줄 수도 있어서,
+                    // 정확히 똑같은 문자열이 아니라 서로 포함하는 관계면 매칭되도록 처리
+                    const matchedDistrict = matchedTab
+                      ? REGION_DISTRICTS[matchedTab]?.find((d) => region2 === d || region2.startsWith(d) || d.startsWith(region2))
+                      : null;
+
+                    if (matchedTab && matchedDistrict) {
                       setActiveRegion(matchedTab);
-                      setSelectedDistricts([region2]);
+                      setSelectedDistricts([matchedDistrict]);
                       setRegionExpanded(true);
 
                       // 지금까지 불러온 데이터(allPlaces)에 이 지역 식당이 하나도 없으면
                       // (예: 미리 저장해둔 데이터가 이 구까지는 없는 경우), 그 자리에서 바로
                       // 카카오 로컬 API로 실시간 검색해서 결과에 합쳐줌
                       setAllPlaces((prev) => {
-                        const hasThisDistrict = prev.some((p) => p.district === region2);
+                        const hasThisDistrict = prev.some((p) => p.district === matchedDistrict);
                         if (hasThisDistrict) {
-                          showToast(`${region2} 주변 식당으로 지역이 자동 설정됐어요.`);
+                          showToast(`${matchedDistrict} 주변 식당으로 지역이 자동 설정됐어요.`);
                           return prev;
                         }
-                        searchPlacesByName(`서울 ${region2} 맛집`)
+                        searchPlacesByName(`${matchedTab} ${matchedDistrict} 맛집`)
                           .then((nearby) => {
                             if (nearby.length > 0) {
-                              setAllPlaces((cur) => [...cur, ...nearby.map((p) => ({ ...p, district: p.district || region2 }))]);
-                              showToast(`${region2} 실제 식당 ${nearby.length}곳을 새로 불러왔어요.`);
+                              setAllPlaces((cur) => [...cur, ...nearby.map((p) => ({ ...p, district: p.district || matchedDistrict }))]);
+                              showToast(`${matchedDistrict} 실제 식당 ${nearby.length}곳을 새로 불러왔어요.`);
                             } else {
-                              showToast(`${region2} 주변 식당을 찾지 못했어요.`);
+                              showToast(`${matchedDistrict} 주변 식당을 찾지 못했어요.`);
                             }
                           })
                           .catch(() => showToast("주변 식당을 불러오지 못했어요."));
@@ -2504,6 +2510,19 @@ function NoticeScreen({ onBack }) {
 
 // ---- 검색 결과 목록 ----
 function ResultsListScreen({ items, onBack, onSelectPlace }) {
+  const [query, setQuery] = useState("");
+  const filteredItems = query.trim()
+    ? items.filter((item) => {
+        const q = query.trim().toLowerCase();
+        return (
+          (item.displayName || item.name || "").toLowerCase().includes(q) ||
+          (item.category || "").toLowerCase().includes(q) ||
+          (item.address || "").toLowerCase().includes(q) ||
+          (item.district || "").toLowerCase().includes(q)
+        );
+      })
+    : items;
+
   return (
     <>
       <div style={s.header}>
@@ -2518,13 +2537,19 @@ function ResultsListScreen({ items, onBack, onSelectPlace }) {
       <div style={s.searchBarRow}>
         <div style={s.searchBarWrap}>
           <i className="ti ti-search" style={{ fontSize: 15, color: "#B0B0B0" }} />
-          <input type="text" placeholder="식당, 음식 또는 지역 검색" style={s.searchBarInput} />
+          <input
+            type="text"
+            placeholder="식당, 음식 또는 지역 검색"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={s.searchBarInput}
+          />
         </div>
       </div>
-      <p style={s.resultsCountText}>{items.length}개의 식당을 찾았습니다.</p>
+      <p style={s.resultsCountText}>{filteredItems.length}개의 식당을 찾았습니다.</p>
       <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 16px" }}>
-        {items.length === 0 && <p style={s.emptyText}>조건에 맞는 식당이 없어요. 필터를 조정해보세요.</p>}
-        {items.map((item) => (
+        {filteredItems.length === 0 && <p style={s.emptyText}>조건에 맞는 식당이 없어요. 필터를 조정해보세요.</p>}
+        {filteredItems.map((item) => (
           <button key={item.id} type="button" style={s.resultCard} onClick={() => onSelectPlace(item)}>
             <div style={s.resultCardImage}>
               <span style={s.resultCardBadgeRow}>
