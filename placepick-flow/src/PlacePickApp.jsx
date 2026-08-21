@@ -198,10 +198,6 @@ async function completeSignUp(payload) {
   saveStoredUsers(users);
   return { success: true, ...payload };
 }
-async function fetchFilteredPlaces(filters) {
-  await new Promise((r) => setTimeout(r, 200));
-  return MOCK_RESTAURANTS.filter((p) => p.rating >= filters.minRating && p.rating <= filters.maxRating);
-}
 
 // ------------------------------------------------------------
 // 문의하기 전송
@@ -237,24 +233,38 @@ async function submitInquiry({ message, userId }) {
   return { success: true, delivered: false };
 }
 
-async function extractPlaceInfo(photo, index) {
+async function extractPlaceInfo(item, index) {
   // api/analyze-place-image.js 서버 함수(Vercel Functions)를 실제로 호출합니다.
   // 로컬에서 그냥 npm run dev로 돌리면 이 서버 함수가 없어서 요청이 실패하는데,
   // 그런 경우에는 자동으로 mock 데이터로 대체해서 화면 흐름은 계속 테스트할 수 있게 해뒀어요.
   // 실제로 AI 분석이 되려면 Vercel에 배포하고 OPENAI_API_KEY 환경변수를 등록해야 합니다.
-  if (photo?.file) {
+  //
+  // 사진 여러 장을 올린 경우, 한 식당의 서로 다른 사진(간판/메뉴판/내부 등)으로 보고
+  // 전부 한 번에 같이 분석해서 하나의 결과로 합쳐 받습니다.
+  const photoFiles = item?.type === "photos" ? item.photos.map((p) => p.file) : item?.file ? [item.file] : [];
+
+  if (photoFiles.length > 0) {
     try {
-      const imageBase64 = await fileToBase64(photo.file);
+      const images = await Promise.all(
+        photoFiles.map(async (file) => {
+          const compressedBlob = await compressImage(file);
+          const imageBase64 = await fileToBase64(compressedBlob);
+          return { imageBase64, mimeType: "image/jpeg" };
+        })
+      );
       const res = await fetch("/api/analyze-place-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64, mimeType: photo.file.type || "image/jpeg" }),
+        body: JSON.stringify({ images }),
       });
       if (res.ok) {
         const data = await res.json();
         if (data && !data.error) return data;
+        console.warn("이미지 분석 API가 에러를 반환해서 mock 데이터로 대체합니다:", data?.error);
+      } else {
+        const errBody = await res.json().catch(() => ({}));
+        console.warn(`이미지 분석 API 응답 실패(status ${res.status}), mock 데이터로 대체합니다:`, errBody?.error || "(응답 본문 없음)");
       }
-      console.warn("이미지 분석 API 응답 실패, mock 데이터로 대체합니다.");
     } catch (err) {
       console.warn("이미지 분석 API 호출 실패(로컬 개발 중이면 정상입니다), mock 데이터로 대체합니다:", err);
     }
@@ -265,6 +275,45 @@ async function extractPlaceInfo(photo, index) {
 }
 
 // 파일을 base64 문자열(데이터 URL 접두어 제외)로 변환
+// 사진을 그대로 base64로 보내면 휴대폰 사진 기준 5~10MB가 넘어서
+// Vercel 서버 함수의 요청 크기 제한(4.5MB)에 걸려 500 에러가 날 수 있어요.
+// 그래서 보내기 전에 가로/세로 최대 1280px, JPEG 품질 80%로 줄여서 훨씬 가볍게 만듭니다.
+function compressImage(file, maxDimension = 1280, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let { width, height } = img;
+      if (width > height && width > maxDimension) {
+        height = Math.round((height * maxDimension) / width);
+        width = maxDimension;
+      } else if (height > maxDimension) {
+        width = Math.round((width * maxDimension) / height);
+        height = maxDimension;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) return reject(new Error("이미지 압축에 실패했어요."));
+          resolve(blob);
+        },
+        "image/jpeg",
+        quality
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("이미지를 불러오지 못했어요."));
+    };
+    img.src = objectUrl;
+  });
+}
+
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1429,39 +1478,8 @@ const FOOD_TYPE_OPTIONS = [
   { key: "분식", icon: "ti-meat" },
 ];
 
-// ---- 검색 결과 / 식당 상세 / 예약 관련 mock 데이터 ----
-const TAG_POOLS = [
-  ["혼밥 가능", "와이파이", "주차 가능"],
-  ["단체석", "와이파이", "콘센트"],
-  ["혼밥 가능", "24시간 운영", "주차 가능"],
-  ["반려동물 동반", "와이파이"],
-  ["비건", "혼밥 가능", "콘센트"],
-  ["단체석", "주차 가능", "오늘 휴무 제외"],
-  ["혼밥 가능", "24시간 운영"],
-  ["와이파이", "콘센트", "비건"],
-];
-const PRICE_POOL = [12000, 28000, 45000, 8000, 60000, 15000, 32000, 20000];
-const REVIEW_COUNT_POOL = [42, 310, 15, 128, 480, 6, 95, 220];
-const MOOD_POOL = ["로컬", "캐주얼", "모던", "감성", "럭셔리", "로컬", "캐주얼", "모던"];
-const DISTRICT_POOL = ["강남구", "마포구", "성동구", "종로구", "용산구", "송파구", "서초구", "영등포구"];
-const RESULT_LIST_ITEMS = MOCK_RESTAURANTS.map((r, i) => ({
-  ...r,
-  displayName: r.name,
-  openNow: i % 3 !== 2, // 대략 2/3 정도는 영업중, 나머지는 영업종료로 다양하게
-  priceLevel: "$$",
-  price: PRICE_POOL[i % PRICE_POOL.length],
-  reviewCount: REVIEW_COUNT_POOL[i % REVIEW_COUNT_POOL.length],
-  mood: MOOD_POOL[i % MOOD_POOL.length],
-  district: DISTRICT_POOL[i % DISTRICT_POOL.length],
-  distance: "0.4km",
-  saves: "1.2k",
-  tags: TAG_POOLS[i % TAG_POOLS.length],
-  signatureMenu: [
-    { name: "정식 코스 (Classic Course)", price: "45,000원" },
-    { name: "한우 불고기 반상", price: "28,000원" },
-  ],
-}));
-
+// ---- 예전에 검색 결과 화면을 mock으로 채우던 데이터 (지금은 allPlaces의 실제 데이터를 씀).
+// RESTAURANT_DETAIL_TEMPLATE만 상세 화면의 fallback 값으로 계속 사용됨.
 const RESTAURANT_DETAIL_TEMPLATE = {
   name: "플레이스픽 다이닝",
   rating: 4.8,
@@ -1535,9 +1553,15 @@ const MAP_PIN_COORDS = [
 
 // 카카오맵 SDK(window.kakao)가 로드되어 있으면 실제 지도를, 아니면 목업을 보여줌.
 // index.html에 카카오 JS 키를 넣은 스크립트 태그를 추가하면 자동으로 실제 지도로 전환됩니다.
-function KakaoMapReal({ showToast }) {
+function KakaoMapReal({ places, showToast }) {
   const mapRef = useRef(null);
   const [selected, setSelected] = useState(null);
+
+  // 위/경도 정보가 있는 실제 장소만 지도에 표시 (최대 30곳, 너무 많으면 지도가 느려짐)
+  const pinnablePlaces = useMemo(
+    () => (places || []).filter((p) => typeof p.lat === "number" && typeof p.lng === "number").slice(0, 30),
+    [places]
+  );
 
   useEffect(() => {
     if (!window.kakao || !window.kakao.maps) return;
@@ -1546,16 +1570,17 @@ function KakaoMapReal({ showToast }) {
         center: new window.kakao.maps.LatLng(37.5665, 126.978),
         level: 6,
       });
-      MAP_PIN_PLACES.forEach((place, i) => {
-        const coord = MAP_PIN_COORDS[i] || MAP_PIN_COORDS[0];
+      const list = pinnablePlaces.length > 0 ? pinnablePlaces : MAP_PIN_PLACES.map((p, i) => ({ ...p, ...MAP_PIN_COORDS[i] }));
+      list.forEach((place) => {
+        if (typeof place.lat !== "number" || typeof place.lng !== "number") return;
         const marker = new window.kakao.maps.Marker({
-          position: new window.kakao.maps.LatLng(coord.lat, coord.lng),
+          position: new window.kakao.maps.LatLng(place.lat, place.lng),
           map,
         });
         window.kakao.maps.event.addListener(marker, "click", () => setSelected(place));
       });
     });
-  }, []);
+  }, [pinnablePlaces]);
 
   return (
     <div style={s.mapMockupWrap}>
@@ -1575,7 +1600,7 @@ function KakaoMapReal({ showToast }) {
   );
 }
 
-function MapView({ showToast }) {
+function MapView({ places, showToast }) {
   const [kakaoReady, setKakaoReady] = useState(
     typeof window !== "undefined" && !!(window.kakao && window.kakao.maps)
   );
@@ -1596,11 +1621,29 @@ function MapView({ showToast }) {
     };
   }, [kakaoReady]);
 
-  return kakaoReady ? <KakaoMapReal showToast={showToast} /> : <MapMockup showToast={showToast} />;
+  return kakaoReady ? <KakaoMapReal places={places} showToast={showToast} /> : <MapMockup places={places} showToast={showToast} />;
 }
 
-function MapMockup({ showToast }) {
+function MapMockup({ places, showToast }) {
   const [selected, setSelected] = useState(null);
+
+  // 목업 지도는 실제 좌표가 없는 일러스트라, 실제 장소 몇 곳을 뽑아서 그럴듯한 위치에 배치
+  const pins = useMemo(() => {
+    const source = places && places.length > 0 ? places : MAP_PIN_PLACES;
+    const positions = [
+      { x: 120, y: 90 },
+      { x: 200, y: 150 },
+      { x: 245, y: 230 },
+      { x: 60, y: 190 },
+      { x: 170, y: 40 },
+    ];
+    return source.slice(0, 5).map((p, i) => ({
+      ...p,
+      x: positions[i % positions.length].x,
+      y: positions[i % positions.length].y,
+      icon: p.category === "카페" ? "ti-coffee" : "ti-tools-kitchen-2",
+    }));
+  }, [places]);
 
   return (
     <div style={s.mapMockupWrap}>
@@ -1614,9 +1657,9 @@ function MapMockup({ showToast }) {
         <rect x="130" y="80" width="40" height="50" fill="#D8DED0" />
         <rect x="220" y="160" width="45" height="38" fill="#D8DED0" />
       </svg>
-      {MAP_PIN_PLACES.map((p) => (
+      {pins.map((p, i) => (
         <button
-          key={p.id}
+          key={p.id || i}
           type="button"
           onClick={() => setSelected(p)}
           style={{ ...s.mapPin, left: p.x, top: p.y }}
@@ -1806,11 +1849,7 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
           </button>
         </div>
       </div>
-      <div style={s.searchBarRow}>
-        <div style={s.searchBarWrap}>
-          <i className="ti ti-search" style={{ fontSize: 15, color: "#B0B0B0" }} />
-          <input type="text" placeholder="음식 종류 또는 식당 이름 검색..." style={s.searchBarInput} />
-        </div>
+      <div style={{ ...s.searchBarRow, justifyContent: "flex-end" }}>
         <button
           type="button"
           style={s.locationButton}
@@ -1830,7 +1869,7 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
         </button>
       </div>
       <div style={{ position: "relative" }}>
-        <MapView showToast={showToast} />
+        <MapView places={allPlaces} showToast={showToast} />
         <div style={s.zoomControl}>
           <button type="button" style={s.zoomBtn} onClick={() => showToast("지도를 확대했어요.")} aria-label="확대">
             <i className="ti ti-plus" style={{ fontSize: 14 }} />
@@ -2745,7 +2784,7 @@ function HomeTab({ showToast, showConfirm, onGoToReservations, onLogout }) {
   const [saveSheetOpen, setSaveSheetOpen] = useState(false);
   const [reserveSheetOpen, setReserveSheetOpen] = useState(false);
   const [lastReservation, setLastReservation] = useState(null);
-  const [filteredResults, setFilteredResults] = useState(RESULT_LIST_ITEMS);
+  const [filteredResults, setFilteredResults] = useState([]);
 
   return (
     <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column" }}>
@@ -2932,7 +2971,8 @@ function UploadInitScreen({ onNext }) {
             fileInputRef.current?.click();
             return;
           }
-          onNext(photos.map((p) => ({ type: "photo", file: p.file, url: p.url })));
+          // 여러 장을 각각 다른 식당으로 취급하지 않고, "한 식당의 여러 사진"으로 묶어서 전달
+          onNext([{ type: "photos", photos: photos.map((p) => ({ file: p.file, url: p.url })) }]);
         };
 
         const handleLinkExtract = () => {
@@ -3062,7 +3102,9 @@ function UploadInitScreen({ onNext }) {
 }
 
 function UploadConfirmScreenWrapper({ items, onBack, onNext }) {
-  const firstUrl = items?.[0]?.url;
+  const firstItem = items?.[0];
+  const firstUrl = firstItem?.url || firstItem?.photos?.[0]?.url;
+  const photoCount = firstItem?.type === "photos" ? firstItem.photos.length : items?.length || 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
       <div style={s.header}>
@@ -3081,7 +3123,7 @@ function UploadConfirmScreenWrapper({ items, onBack, onNext }) {
             <i className="ti ti-photo-x" style={{ fontSize: 40, color: "#C4C2B8" }} />
           )}
         </div>
-        {items && items.length > 1 && <p style={s.photoHint}>총 {items.length}장을 함께 업로드해요.</p>}
+        {photoCount > 1 && <p style={s.photoHint}>같은 식당 사진 {photoCount}장을 함께 분석해요.</p>}
       </div>
       <div style={s.footer}>
         <button type="button" onClick={onNext} style={s.primaryButton}>
@@ -3094,7 +3136,7 @@ function UploadConfirmScreenWrapper({ items, onBack, onNext }) {
 
 function ReadingScreen({ items, onDone }) {
   const [dot, setDot] = useState(0);
-  const firstUrl = items?.[0]?.url;
+  const firstUrl = items?.[0]?.url || items?.[0]?.photos?.[0]?.url;
   useEffect(() => {
     const interval = setInterval(() => setDot((d) => (d + 1) % 3), 400);
     onDone().finally(() => clearInterval(interval));
@@ -3355,7 +3397,8 @@ function UploadTab({ showToast, showConfirm, onLogout }) {
               const results = await Promise.all(
                 selectedItems.map(async (item, i) => {
                   const extracted = await extractPlaceInfo(item, i);
-                  return { ...extracted, url: item.url };
+                  const previewUrl = item.url || item.photos?.[0]?.url || null;
+                  return { ...extracted, url: previewUrl };
                 })
               );
               setExtractedItems(results);
@@ -3402,33 +3445,10 @@ function UploadTab({ showToast, showConfirm, onLogout }) {
 }
 
 // ---- 저장/예약 탭 ----
-const MOCK_PLACE = {
-  name: "쿠로코 식당 연남점",
-  status: "영업중 11:00-21:00",
-  address: "서울 서대문구 연남길 2 로3 803",
-  rating: 4.9,
-  reviewCount: 146,
-};
-const INITIAL_FOLDERS = [
-  {
-    id: "f1",
-    name: "가고 싶은 곳",
-    items: [
-      { id: "i1", name: "취향낭낭", category: "베이커리" },
-      { id: "i2", name: "마라탕탕", category: "중식" },
-      { id: "i3", name: "스시소시", category: "일식" },
-      { id: "i4", name: "순이네", category: "분식" },
-    ],
-  },
-  { id: "f2", name: "분좋카", items: Array.from({ length: 10 }, (_, i) => ({ id: `f2-${i}`, name: `카페 ${i + 1}`, category: "카페" })) },
-  { id: "f3", name: "느좋 술집", items: Array.from({ length: 4 }, (_, i) => ({ id: `f3-${i}`, name: `술집 ${i + 1}`, category: "술집" })) },
-  { id: "f4", name: "데이트 스팟", items: Array.from({ length: 6 }, (_, i) => ({ id: `f4-${i}`, name: `스팟 ${i + 1}`, category: "데이트" })) },
-];
-const INITIAL_RESERVATIONS = [
-  { id: "r1", date: "2026.04.25", label: "오늘의 예약", cancelled: false, items: [{ time: "13:30", ...MOCK_PLACE, code: "3145" }, { time: "15:00", ...MOCK_PLACE, name: "카페 봄날", code: "3145" }] },
-  { id: "r2", date: "2026.04.25", label: "2026.04.25 목요일", cancelled: false, items: [{ time: "13:30", ...MOCK_PLACE, code: "3145" }, { time: "15:00", ...MOCK_PLACE, name: "카페 봄날", code: "3145" }] },
-  { id: "r3", date: "2026.04.25", label: "2026.04.25 목요일", cancelled: true, items: [{ time: "13:30", ...MOCK_PLACE, code: "3145" }] },
-];
+// 저장/예약 탭은 이제 예시(mock) 데이터 없이 빈 상태로 시작합니다.
+// 사용자가 실제로 저장하거나 예약해야 목록에 항목이 생겨요.
+const INITIAL_FOLDERS = [];
+const INITIAL_RESERVATIONS = [];
 
 // ---- 새 폴더 추가 모달 ----
 function AddFolderModal({ open, onSave, onCancel }) {
@@ -3927,6 +3947,7 @@ function ReservationTab({ showToast, showConfirm }) {
         </button>
       </div>
       <div style={s.scrollBody}>
+        {groups.length === 0 && <p style={s.emptyText}>아직 예약한 곳이 없어요.</p>}
         {groups.map((group) => (
           <ReservationGroup key={group.id} group={group} onCancel={handleCancel} onSelectPlace={setSelectedPlace} />
         ))}
