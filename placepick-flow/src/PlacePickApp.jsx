@@ -94,6 +94,12 @@ function addPlaceToFolderStorage(folderName, place) {
     id: `p-${Date.now()}`,
     name: place?.name || place?.displayName || "저장한 장소",
     category: place?.category || "",
+    address: place?.address || "",
+    hours: place?.hours || "",
+    rating: place?.rating,
+    photoUrl: place?.photoUrl || place?.url || null,
+    aiAnalyzed: !!place?.aiAnalyzed,
+    district: place?.district || "",
   };
 
   const idx = folders.findIndex((f) => f.name === folderName);
@@ -3596,7 +3602,7 @@ function SavedDoneScreen({ newItems, onSelectPlace, onAddMore }) {
   );
 }
 
-function UploadTab({ showToast, showConfirm, onLogout }) {
+function UploadTab({ showToast, showConfirm, onLogout, onFocusModeChange }) {
   const [step, setStep] = useState("init");
   const [selectedItems, setSelectedItems] = useState([]);
   const [extractedItems, setExtractedItems] = useState([]);
@@ -3605,6 +3611,15 @@ function UploadTab({ showToast, showConfirm, onLogout }) {
   const [subScreen, setSubScreen] = useState(null); // null | "settings" | "contact" | "notice" | "profile"
   const [selectedPlace, setSelectedPlace] = useState(null);
   const [saveSheetOpen, setSaveSheetOpen] = useState(false);
+
+  // "init"(맨 처음 업로드 화면) 말고는 전부 하단 탭바 없이 몰입해서 진행하는 흐름이라,
+  // 그동안은 하단 탭바/홈 인디케이터를 숨겨달라고 위(MainShell)에 알림
+  useEffect(() => {
+    if (onFocusModeChange) onFocusModeChange(step !== "init" || !!selectedPlace);
+    return () => {
+      if (onFocusModeChange) onFocusModeChange(false);
+    };
+  }, [step, selectedPlace]);
 
   if (subScreen) {
     return (
@@ -4121,6 +4136,12 @@ function SavedTab({ showToast, showConfirm }) {
                 id: `p-${Date.now()}`,
                 name: selectedPlace?.name || selectedPlace?.displayName || "저장한 장소",
                 category: selectedPlace?.category || "",
+                address: selectedPlace?.address || "",
+                hours: selectedPlace?.hours || "",
+                rating: selectedPlace?.rating,
+                photoUrl: selectedPlace?.photoUrl || selectedPlace?.url || null,
+                aiAnalyzed: !!selectedPlace?.aiAnalyzed,
+                district: selectedPlace?.district || "",
               };
               const idx = prev.findIndex((f) => f.name === collectionName);
               if (idx >= 0) {
@@ -4375,6 +4396,7 @@ function MainShell({ showToast, showConfirm, onLogout }) {
   const [homeResetKey, setHomeResetKey] = useState(0);
   const [savedInitialSubTab, setSavedInitialSubTab] = useState("saved");
   const [savedTabKey, setSavedTabKey] = useState(0);
+  const [uploadFocusMode, setUploadFocusMode] = useState(false);
 
   const handleTabChange = (tab) => {
     if (tab === "home" && activeTab === "home") {
@@ -4398,7 +4420,9 @@ function MainShell({ showToast, showConfirm, onLogout }) {
       {activeTab === "home" && (
         <HomeTab key={homeResetKey} showToast={showToast} showConfirm={showConfirm} onGoToReservations={goToReservations} onLogout={onLogout} />
       )}
-      {activeTab === "upload" && <UploadTab showToast={showToast} showConfirm={showConfirm} onLogout={onLogout} />}
+      {activeTab === "upload" && (
+        <UploadTab showToast={showToast} showConfirm={showConfirm} onLogout={onLogout} onFocusModeChange={setUploadFocusMode} />
+      )}
       {activeTab === "saved" && (
         <SavedReservationTab
           key={savedTabKey}
@@ -4408,8 +4432,8 @@ function MainShell({ showToast, showConfirm, onLogout }) {
           onLogout={onLogout}
         />
       )}
-      <MainBottomTabBar active={activeTab} onChange={handleTabChange} />
-      <HomeIndicator />
+      {!uploadFocusMode && <MainBottomTabBar active={activeTab} onChange={handleTabChange} />}
+      {!uploadFocusMode && <HomeIndicator />}
     </>
   );
 }
