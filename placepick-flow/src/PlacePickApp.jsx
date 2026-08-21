@@ -1929,7 +1929,28 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
                       setActiveRegion(matchedTab);
                       setSelectedDistricts([region2]);
                       setRegionExpanded(true);
-                      showToast(`${region2} 주변 식당으로 지역이 자동 설정됐어요.`);
+
+                      // 지금까지 불러온 데이터(allPlaces)에 이 지역 식당이 하나도 없으면
+                      // (예: 미리 저장해둔 데이터가 이 구까지는 없는 경우), 그 자리에서 바로
+                      // 카카오 로컬 API로 실시간 검색해서 결과에 합쳐줌
+                      setAllPlaces((prev) => {
+                        const hasThisDistrict = prev.some((p) => p.district === region2);
+                        if (hasThisDistrict) {
+                          showToast(`${region2} 주변 식당으로 지역이 자동 설정됐어요.`);
+                          return prev;
+                        }
+                        searchPlacesByName(`서울 ${region2} 맛집`)
+                          .then((nearby) => {
+                            if (nearby.length > 0) {
+                              setAllPlaces((cur) => [...cur, ...nearby.map((p) => ({ ...p, district: p.district || region2 }))]);
+                              showToast(`${region2} 실제 식당 ${nearby.length}곳을 새로 불러왔어요.`);
+                            } else {
+                              showToast(`${region2} 주변 식당을 찾지 못했어요.`);
+                            }
+                          })
+                          .catch(() => showToast("주변 식당을 불러오지 못했어요."));
+                        return prev;
+                      });
                     }
                   });
                 }
