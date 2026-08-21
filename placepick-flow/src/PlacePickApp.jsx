@@ -256,11 +256,19 @@ async function extractPlaceInfo(item, index, showToast) {
           return { imageBase64, mimeType: "image/jpeg" };
         })
       );
-      const res = await fetch("/api/analyze-place-image", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ images }),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      let res;
+      try {
+        res = await fetch("/api/analyze-place-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ images }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       if (res.ok) {
         const data = await res.json();
         if (data && !data.error) return data;
@@ -270,7 +278,11 @@ async function extractPlaceInfo(item, index, showToast) {
         notify(`[AI분석 실패] 상태코드 ${res.status}: ${errBody?.error || "(응답 본문 없음)"} → 임시 데이터로 대체`);
       }
     } catch (err) {
-      notify(`[AI분석 실패] ${err.message || err} → 임시 데이터로 대체`);
+      notify(
+        err.name === "AbortError"
+          ? "[AI분석 실패] 45초 넘게 응답이 없어서 중단했어요 (서버가 너무 오래 걸림) → 임시 데이터로 대체"
+          : `[AI분석 실패] ${err.message || err} → 임시 데이터로 대체`
+      );
     }
   }
 
@@ -282,7 +294,7 @@ async function extractPlaceInfo(item, index, showToast) {
 // 사진을 그대로 base64로 보내면 휴대폰 사진 기준 5~10MB가 넘어서
 // Vercel 서버 함수의 요청 크기 제한(4.5MB)에 걸려 500 에러가 날 수 있어요.
 // 그래서 보내기 전에 가로/세로 최대 1280px, JPEG 품질 80%로 줄여서 훨씬 가볍게 만듭니다.
-function compressImage(file, maxDimension = 1280, quality = 0.8) {
+function compressImage(file, maxDimension = 1000, quality = 0.7) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const objectUrl = URL.createObjectURL(file);
