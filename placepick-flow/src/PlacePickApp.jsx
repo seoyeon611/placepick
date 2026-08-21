@@ -1806,6 +1806,7 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
   // 자동으로 mock 데이터를 대신 씀 (placesService.js 참고).
   const [allPlaces, setAllPlaces] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
+  const [locating, setLocating] = useState(false);
   const [placesLoading, setPlacesLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
@@ -1880,6 +1881,86 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
     onViewResults(filteredResults);
   };
 
+  const handleUseMyLocation = () => {
+    if (!navigator.geolocation) {
+      showToast("이 브라우저는 위치 정보를 지원하지 않아요.");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setUserLocation({ lat: latitude, lng: longitude });
+        showToast("내 위치로 지도를 이동했어요.");
+
+        try {
+          if (!(window.kakao && window.kakao.maps && window.kakao.maps.services)) {
+            showToast("지도가 아직 다 안 켜졌어요. 잠시 후 다시 눌러주세요.");
+            return;
+          }
+          const geocoder = new window.kakao.maps.services.Geocoder();
+          const result = await new Promise((resolve) => {
+            geocoder.coord2Address(longitude, latitude, (res, status) => {
+              resolve(status === window.kakao.maps.services.Status.OK ? res : null);
+            });
+          });
+          if (!result || !result[0]) {
+            showToast("현재 위치의 주소를 확인하지 못했어요.");
+            return;
+          }
+
+          const region1 = result[0].address.region_1depth_name || "";
+          const region2 = result[0].address.region_2depth_name || "";
+          let matchedTab = null;
+          if (region1.includes("서울")) matchedTab = "서울";
+          else if (region1.includes("경기")) matchedTab = "경기";
+          else if (region1.includes("인천")) matchedTab = "인천";
+
+          // 카카오가 "안산시 단원구"처럼 더 세분화된 이름을 줄 수도 있어서,
+          // 정확히 똑같은 문자열이 아니라 서로 포함하는 관계면 매칭되도록 처리
+          const matchedDistrict = matchedTab
+            ? REGION_DISTRICTS[matchedTab]?.find((d) => region2 === d || region2.startsWith(d) || d.startsWith(region2))
+            : null;
+
+          if (!matchedTab || !matchedDistrict) {
+            showToast("현재 위치가 지원하는 지역(서울/경기/인천) 밖이에요.");
+            return;
+          }
+
+          setActiveRegion(matchedTab);
+          setSelectedDistricts([matchedDistrict]);
+          setRegionExpanded(true);
+          // 새로 불러온 지역 식당들이 "혼밥 가능" 같은 기본 필터에 걸려 다 사라지지 않도록,
+          // 위치 기반 검색을 할 때는 더보기 태그 필터를 초기화
+          setMoreFilters([]);
+
+          const hasThisDistrict = allPlaces.some((p) => p.district === matchedDistrict);
+          if (!hasThisDistrict) {
+            showToast(`${matchedDistrict} 실제 식당을 불러오는 중...`);
+            const nearby = await searchPlacesByName(`${matchedTab} ${matchedDistrict} 맛집`);
+            if (nearby.length > 0) {
+              setAllPlaces((cur) => [...cur, ...nearby.map((p) => ({ ...p, district: p.district || matchedDistrict }))]);
+              showToast(`${matchedDistrict} 실제 식당 ${nearby.length}곳을 새로 불러왔어요.`);
+            } else {
+              showToast(`${matchedDistrict} 주변 식당을 찾지 못했어요.`);
+            }
+          } else {
+            showToast(`${matchedDistrict} 주변 식당으로 지역이 자동 설정됐어요.`);
+          }
+        } catch (err) {
+          console.error(err);
+          showToast("주변 식당을 불러오지 못했어요.");
+        } finally {
+          setLocating(false);
+        }
+      },
+      () => {
+        showToast("위치 권한을 허용해주세요.");
+        setLocating(false);
+      }
+    );
+  };
+
   return (
     <>
       <div style={s.header}>
@@ -1899,71 +1980,10 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
       <div style={{ ...s.searchBarRow, justifyContent: "flex-end" }}>
         <button
           type="button"
-          style={s.locationButton}
+          style={{ ...s.locationButton, opacity: locating ? 0.5 : 1 }}
           aria-label="내 위치"
-          onClick={() => {
-            if (!navigator.geolocation) {
-              showToast("이 브라우저는 위치 정보를 지원하지 않아요.");
-              return;
-            }
-            navigator.geolocation.getCurrentPosition(
-              (pos) => {
-                const { latitude, longitude } = pos.coords;
-                setUserLocation({ lat: latitude, lng: longitude });
-                showToast("내 위치로 지도를 이동했어요.");
-
-                // 카카오맵의 "좌표 → 주소" 변환 기능으로, 지금 있는 곳이 어느 구/시인지
-                // 자동으로 알아내서 지역 선택 필터에 반영 (그래야 내 주변 식당이 결과에 뜸)
-                if (window.kakao && window.kakao.maps && window.kakao.maps.services) {
-                  const geocoder = new window.kakao.maps.services.Geocoder();
-                  geocoder.coord2Address(longitude, latitude, (result, status) => {
-                    if (status !== window.kakao.maps.services.Status.OK || !result[0]) return;
-                    const region1 = result[0].address.region_1depth_name || "";
-                    const region2 = result[0].address.region_2depth_name || "";
-                    let matchedTab = null;
-                    if (region1.includes("서울")) matchedTab = "서울";
-                    else if (region1.includes("경기")) matchedTab = "경기";
-                    else if (region1.includes("인천")) matchedTab = "인천";
-
-                    // 카카오가 "안산시 단원구"처럼 더 세분화된 이름을 줄 수도 있어서,
-                    // 정확히 똑같은 문자열이 아니라 서로 포함하는 관계면 매칭되도록 처리
-                    const matchedDistrict = matchedTab
-                      ? REGION_DISTRICTS[matchedTab]?.find((d) => region2 === d || region2.startsWith(d) || d.startsWith(region2))
-                      : null;
-
-                    if (matchedTab && matchedDistrict) {
-                      setActiveRegion(matchedTab);
-                      setSelectedDistricts([matchedDistrict]);
-                      setRegionExpanded(true);
-
-                      // 지금까지 불러온 데이터(allPlaces)에 이 지역 식당이 하나도 없으면
-                      // (예: 미리 저장해둔 데이터가 이 구까지는 없는 경우), 그 자리에서 바로
-                      // 카카오 로컬 API로 실시간 검색해서 결과에 합쳐줌
-                      setAllPlaces((prev) => {
-                        const hasThisDistrict = prev.some((p) => p.district === matchedDistrict);
-                        if (hasThisDistrict) {
-                          showToast(`${matchedDistrict} 주변 식당으로 지역이 자동 설정됐어요.`);
-                          return prev;
-                        }
-                        searchPlacesByName(`${matchedTab} ${matchedDistrict} 맛집`)
-                          .then((nearby) => {
-                            if (nearby.length > 0) {
-                              setAllPlaces((cur) => [...cur, ...nearby.map((p) => ({ ...p, district: p.district || matchedDistrict }))]);
-                              showToast(`${matchedDistrict} 실제 식당 ${nearby.length}곳을 새로 불러왔어요.`);
-                            } else {
-                              showToast(`${matchedDistrict} 주변 식당을 찾지 못했어요.`);
-                            }
-                          })
-                          .catch(() => showToast("주변 식당을 불러오지 못했어요."));
-                        return prev;
-                      });
-                    }
-                  });
-                }
-              },
-              () => showToast("위치 권한을 허용해주세요.")
-            );
-          }}
+          disabled={locating}
+          onClick={handleUseMyLocation}
         >
           <LocationIcon />
         </button>
