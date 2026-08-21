@@ -1542,6 +1542,19 @@ function CloseIcon({ size = 20, color = "#1A1A1A" }) {
   );
 }
 
+// 지도 앱에서 흔히 보는 "현재 위치" 크로스헤어 아이콘
+function LocationIcon({ size = 18, color = "#1A1A1A" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2v3" />
+      <path d="M12 19v3" />
+      <path d="M2 12h3" />
+      <path d="M19 12h3" />
+    </svg>
+  );
+}
+
 // 실제 카카오맵 SDK를 붙이기 전까지 쓰는 지도 목업.
 // kakao-map-integration.md 가이드대로 연동하면 이 컴포넌트를 실제 <KakaoMap /> 으로 교체하면 됨.
 // 카카오맵 좌표 (서울 기준 임의 배치, 실제 서비스에서는 DB에 저장된 lat/lng를 씀)
@@ -1553,8 +1566,10 @@ const MAP_PIN_COORDS = [
 
 // 카카오맵 SDK(window.kakao)가 로드되어 있으면 실제 지도를, 아니면 목업을 보여줌.
 // index.html에 카카오 JS 키를 넣은 스크립트 태그를 추가하면 자동으로 실제 지도로 전환됩니다.
-function KakaoMapReal({ places, showToast }) {
+function KakaoMapReal({ places, userLocation, showToast }) {
   const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const myLocationMarkerRef = useRef(null);
   const [selected, setSelected] = useState(null);
 
   // 위/경도 정보가 있는 실제 장소만 지도에 표시 (최대 30곳, 너무 많으면 지도가 느려짐)
@@ -1570,6 +1585,7 @@ function KakaoMapReal({ places, showToast }) {
         center: new window.kakao.maps.LatLng(37.5665, 126.978),
         level: 6,
       });
+      mapInstanceRef.current = map;
       const list = pinnablePlaces.length > 0 ? pinnablePlaces : MAP_PIN_PLACES.map((p, i) => ({ ...p, ...MAP_PIN_COORDS[i] }));
       list.forEach((place) => {
         if (typeof place.lat !== "number" || typeof place.lng !== "number") return;
@@ -1581,6 +1597,32 @@ function KakaoMapReal({ places, showToast }) {
       });
     });
   }, [pinnablePlaces]);
+
+  // "내 위치" 버튼으로 실제 위치를 받아오면, 지도를 그 위치로 옮기고 파란 점 마커를 찍음
+  useEffect(() => {
+    if (!userLocation || !mapInstanceRef.current || !window.kakao || !window.kakao.maps) return;
+    const position = new window.kakao.maps.LatLng(userLocation.lat, userLocation.lng);
+    mapInstanceRef.current.setCenter(position);
+    mapInstanceRef.current.setLevel(4);
+
+    if (myLocationMarkerRef.current) {
+      myLocationMarkerRef.current.setMap(null);
+    }
+    const markerImage = new window.kakao.maps.MarkerImage(
+      "data:image/svg+xml;charset=UTF-8," +
+        encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><circle cx="11" cy="11" r="8" fill="%232F7DE1" stroke="white" stroke-width="3"/></svg>'
+        ),
+      new window.kakao.maps.Size(22, 22),
+      { offset: new window.kakao.maps.Point(11, 11) }
+    );
+    myLocationMarkerRef.current = new window.kakao.maps.Marker({
+      position,
+      map: mapInstanceRef.current,
+      image: markerImage,
+      zIndex: 10,
+    });
+  }, [userLocation]);
 
   return (
     <div style={s.mapMockupWrap}>
@@ -1600,7 +1642,7 @@ function KakaoMapReal({ places, showToast }) {
   );
 }
 
-function MapView({ places, showToast }) {
+function MapView({ places, userLocation, showToast }) {
   const [kakaoReady, setKakaoReady] = useState(
     typeof window !== "undefined" && !!(window.kakao && window.kakao.maps)
   );
@@ -1621,7 +1663,11 @@ function MapView({ places, showToast }) {
     };
   }, [kakaoReady]);
 
-  return kakaoReady ? <KakaoMapReal places={places} showToast={showToast} /> : <MapMockup places={places} showToast={showToast} />;
+  return kakaoReady ? (
+    <KakaoMapReal places={places} userLocation={userLocation} showToast={showToast} />
+  ) : (
+    <MapMockup places={places} showToast={showToast} />
+  );
 }
 
 function MapMockup({ places, showToast }) {
@@ -1759,6 +1805,7 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
   // 실제 DB(Firestore)에서 장소 목록을 불러옴. src/firebase.js가 아직 설정 전이면
   // 자동으로 mock 데이터를 대신 씀 (placesService.js 참고).
   const [allPlaces, setAllPlaces] = useState([]);
+  const [userLocation, setUserLocation] = useState(null);
   const [placesLoading, setPlacesLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
@@ -1860,16 +1907,19 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
               return;
             }
             navigator.geolocation.getCurrentPosition(
-              () => showToast("내 위치로 지도를 이동했어요."),
+              (pos) => {
+                setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+                showToast("내 위치로 지도를 이동했어요.");
+              },
               () => showToast("위치 권한을 허용해주세요.")
             );
           }}
         >
-          <i className="ti ti-current-location" style={{ fontSize: 16 }} />
+          <LocationIcon />
         </button>
       </div>
       <div style={{ position: "relative" }}>
-        <MapView places={allPlaces} showToast={showToast} />
+        <MapView places={allPlaces} userLocation={userLocation} showToast={showToast} />
         <div style={s.zoomControl}>
           <button type="button" style={s.zoomBtn} onClick={() => showToast("지도를 확대했어요.")} aria-label="확대">
             <i className="ti ti-plus" style={{ fontSize: 14 }} />
