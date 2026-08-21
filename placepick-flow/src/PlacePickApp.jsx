@@ -3452,59 +3452,68 @@ function InfoConfirmScreen({ items, onBack, onSave }) {
         <button type="button" style={s.iconButton} onClick={onBack} aria-label="뒤로가기">
           <ArrowLeftIcon />
         </button>
-        <span style={s.headerTitle}>업로드</span>
-        <span style={{ width: 28 }} />
+        <span style={s.headerTitle}>{current.name || "정보 확인"}</span>
+        <button type="button" style={s.iconButton} onClick={() => setEditMode((v) => !v)} aria-label="정보 수정">
+          <i className="ti ti-pencil" style={{ fontSize: 16 }} />
+        </button>
       </div>
-      <div style={s.uploadBody}>
-        <div style={s.infoTitleRow}>
-          <p style={s.confirmTitle}>정보가 맞는지 확인해주세요!</p>
-          <button type="button" style={s.editIconBtn} onClick={() => setEditMode((v) => !v)} aria-label="정보 수정">
-            <i className="ti ti-pencil" style={{ fontSize: 16 }} />
-          </button>
-        </div>
-        {current.aiAnalyzed && (
-          <div style={s.aiBadgeRow}>
-            <i className="ti ti-sparkles" style={{ fontSize: 13, color: "#EF9F27" }} />
-            <span>AI가 사진을 분석해서 알아낸 정보예요</span>
-          </div>
-        )}
-        <div style={s.previewImageBox}>
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        {/* 상세페이지와 똑같은 형태: 큰 사진 + 배지 */}
+        <div style={s.detailImageBox}>
           {current.url ? (
-            <img src={current.url} alt="선택한 사진" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8 }} />
+            <img src={current.url} alt={current.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
           ) : (
             <i className="ti ti-photo-x" style={{ fontSize: 40, color: "#C4C2B8" }} />
           )}
+          {current.aiAnalyzed && (
+            <span style={s.aiAnalyzedBadge}>
+              <i className="ti ti-sparkles" style={{ fontSize: 12 }} /> AI 분석 완료
+            </span>
+          )}
         </div>
-        {!editMode ? (
-          <>
-            <p style={s.placeName}>
-              {current.name}
-              <span style={s.placePrice}>{current.price}</span>
-            </p>
-            <p style={s.placeCategory}>{current.category}</p>
-            <p style={s.placeMetaRow}>
-              <i className="ti ti-map-pin" style={{ fontSize: 13 }} /> {current.address}
-            </p>
-            <p style={s.placeMetaRow}>
-              <i className="ti ti-calendar" style={{ fontSize: 13 }} /> {current.hours}
-            </p>
-          </>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
-            <input value={current.name} onChange={(e) => updateField("name", e.target.value)} style={s.editInput} placeholder="가게 이름" />
-            <input value={current.category} onChange={(e) => updateField("category", e.target.value)} style={s.editInput} placeholder="카테고리" />
-            <input value={current.price} onChange={(e) => updateField("price", e.target.value)} style={s.editInput} placeholder="가격대" />
-            <input value={current.address} onChange={(e) => updateField("address", e.target.value)} style={s.editInput} placeholder="주소" />
-            <input value={current.hours} onChange={(e) => updateField("hours", e.target.value)} style={s.editInput} placeholder="영업시간" />
-          </div>
-        )}
-        {data.length > 1 && (
-          <div style={s.paginationRow}>
-            {data.map((_, i) => (
-              <button key={i} type="button" onClick={() => setIndex(i)} style={{ ...s.pageDot, background: i === index ? "#1A1A1A" : "#DADADA" }} />
-            ))}
-          </div>
-        )}
+
+        <div style={{ padding: "14px 20px 0" }}>
+          {current.aiAnalyzed && (
+            <div style={s.aiBadgeRow}>
+              <i className="ti ti-sparkles" style={{ fontSize: 13, color: "#EF9F27" }} />
+              <span>업로드한 사진을 AI가 보고 아래 정보를 알아냈어요. 확인 후 저장해주세요.</span>
+            </div>
+          )}
+
+          {!editMode ? (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 17, fontWeight: 700 }}>{current.name || "(이름 미확인)"}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#8A8A8A" }}>{current.category || "-"}</span>
+              </div>
+              <p style={s.detailMetaRow}>
+                <i className="ti ti-map-pin" style={{ fontSize: 12 }} /> {current.address || "주소 정보 없음"}
+              </p>
+              <p style={s.detailMetaRow}>
+                <i className="ti ti-clock" style={{ fontSize: 12 }} /> {current.hours || "영업시간 정보 없음"}
+              </p>
+              <p style={s.detailMetaRow}>
+                <i className="ti ti-cash" style={{ fontSize: 12 }} /> {current.price || "가격 정보 없음"}
+              </p>
+            </>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+              <input value={current.name} onChange={(e) => updateField("name", e.target.value)} style={s.editInput} placeholder="가게 이름" />
+              <input value={current.category} onChange={(e) => updateField("category", e.target.value)} style={s.editInput} placeholder="카테고리" />
+              <input value={current.price} onChange={(e) => updateField("price", e.target.value)} style={s.editInput} placeholder="가격대" />
+              <input value={current.address} onChange={(e) => updateField("address", e.target.value)} style={s.editInput} placeholder="주소" />
+              <input value={current.hours} onChange={(e) => updateField("hours", e.target.value)} style={s.editInput} placeholder="영업시간" />
+            </div>
+          )}
+
+          {data.length > 1 && (
+            <div style={s.paginationRow}>
+              {data.map((_, i) => (
+                <button key={i} type="button" onClick={() => setIndex(i)} style={{ ...s.pageDot, background: i === index ? "#1A1A1A" : "#DADADA" }} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <div style={s.footer}>
         <button type="button" onClick={handleSave} disabled={saving} style={s.primaryButton}>
