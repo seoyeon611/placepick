@@ -1908,8 +1908,31 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
             }
             navigator.geolocation.getCurrentPosition(
               (pos) => {
-                setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+                const { latitude, longitude } = pos.coords;
+                setUserLocation({ lat: latitude, lng: longitude });
                 showToast("내 위치로 지도를 이동했어요.");
+
+                // 카카오맵의 "좌표 → 주소" 변환 기능으로, 지금 있는 곳이 어느 구/시인지
+                // 자동으로 알아내서 지역 선택 필터에 반영 (그래야 내 주변 식당이 결과에 뜸)
+                if (window.kakao && window.kakao.maps && window.kakao.maps.services) {
+                  const geocoder = new window.kakao.maps.services.Geocoder();
+                  geocoder.coord2Address(longitude, latitude, (result, status) => {
+                    if (status !== window.kakao.maps.services.Status.OK || !result[0]) return;
+                    const region1 = result[0].address.region_1depth_name || "";
+                    const region2 = result[0].address.region_2depth_name || "";
+                    let matchedTab = null;
+                    if (region1.includes("서울")) matchedTab = "서울";
+                    else if (region1.includes("경기")) matchedTab = "경기";
+                    else if (region1.includes("인천")) matchedTab = "인천";
+
+                    if (matchedTab && REGION_DISTRICTS[matchedTab]?.includes(region2)) {
+                      setActiveRegion(matchedTab);
+                      setSelectedDistricts([region2]);
+                      setRegionExpanded(true);
+                      showToast(`${region2} 주변 식당으로 지역이 자동 설정됐어요.`);
+                    }
+                  });
+                }
               },
               () => showToast("위치 권한을 허용해주세요.")
             );
