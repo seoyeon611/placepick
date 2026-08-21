@@ -1570,7 +1570,9 @@ function KakaoMapReal({ places, userLocation, showToast }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const myLocationMarkerRef = useRef(null);
+  const placeMarkersRef = useRef([]);
   const [selected, setSelected] = useState(null);
+  const [mapReady, setMapReady] = useState(false);
 
   // 위/경도 정보가 있는 실제 장소만 지도에 표시 (최대 30곳, 너무 많으면 지도가 느려짐)
   const pinnablePlaces = useMemo(
@@ -1578,6 +1580,8 @@ function KakaoMapReal({ places, userLocation, showToast }) {
     [places]
   );
 
+  // 지도 자체는 딱 한 번만 만듦 (여기서 마커까지 같이 새로 만들면, 나중에 places가
+  // 바뀔 때마다 지도가 통째로 재생성되면서 중심이 서울로 리셋되는 문제가 있었음)
   useEffect(() => {
     if (!window.kakao || !window.kakao.maps) return;
     window.kakao.maps.load(() => {
@@ -1586,17 +1590,27 @@ function KakaoMapReal({ places, userLocation, showToast }) {
         level: 6,
       });
       mapInstanceRef.current = map;
-      const list = pinnablePlaces.length > 0 ? pinnablePlaces : MAP_PIN_PLACES.map((p, i) => ({ ...p, ...MAP_PIN_COORDS[i] }));
-      list.forEach((place) => {
-        if (typeof place.lat !== "number" || typeof place.lng !== "number") return;
-        const marker = new window.kakao.maps.Marker({
-          position: new window.kakao.maps.LatLng(place.lat, place.lng),
-          map,
-        });
-        window.kakao.maps.event.addListener(marker, "click", () => setSelected(place));
-      });
+      setMapReady(true);
     });
-  }, [pinnablePlaces]);
+  }, []);
+
+  // 장소 목록이 바뀔 때는 지도를 다시 만들지 않고, 마커만 지웠다가 새로 찍음
+  useEffect(() => {
+    if (!mapReady || !mapInstanceRef.current || !window.kakao || !window.kakao.maps) return;
+    placeMarkersRef.current.forEach((m) => m.setMap(null));
+    placeMarkersRef.current = [];
+
+    const list = pinnablePlaces.length > 0 ? pinnablePlaces : MAP_PIN_PLACES.map((p, i) => ({ ...p, ...MAP_PIN_COORDS[i] }));
+    list.forEach((place) => {
+      if (typeof place.lat !== "number" || typeof place.lng !== "number") return;
+      const marker = new window.kakao.maps.Marker({
+        position: new window.kakao.maps.LatLng(place.lat, place.lng),
+        map: mapInstanceRef.current,
+      });
+      window.kakao.maps.event.addListener(marker, "click", () => setSelected(place));
+      placeMarkersRef.current.push(marker);
+    });
+  }, [pinnablePlaces, mapReady]);
 
   // "내 위치" 버튼으로 실제 위치를 받아오면, 지도를 그 위치로 옮기고 파란 점 마커를 찍음
   useEffect(() => {
@@ -1939,7 +1953,9 @@ function ExploreContent({ onOpenMenu, onOpenSettings, onViewResults, showToast }
             showToast(`${matchedDistrict} 실제 식당을 불러오는 중...`);
             const nearby = await searchPlacesByName(`${matchedTab} ${matchedDistrict} 맛집`);
             if (nearby.length > 0) {
-              setAllPlaces((cur) => [...cur, ...nearby.map((p) => ({ ...p, district: p.district || matchedDistrict }))]);
+              // 카카오가 준 원래 지역명("안산시 단원구" 등)이 아니라, 방금 설정한 필터 값
+              // (matchedDistrict)과 정확히 똑같이 맞춰야 지역 필터에서 걸러지지 않음
+              setAllPlaces((cur) => [...cur, ...nearby.map((p) => ({ ...p, district: matchedDistrict }))]);
               showToast(`${matchedDistrict} 실제 식당 ${nearby.length}곳을 새로 불러왔어요.`);
             } else {
               showToast(`${matchedDistrict} 주변 식당을 찾지 못했어요.`);
