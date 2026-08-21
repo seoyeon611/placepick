@@ -233,7 +233,7 @@ async function submitInquiry({ message, userId }) {
   return { success: true, delivered: false };
 }
 
-async function extractPlaceInfo(item, index) {
+async function extractPlaceInfo(item, index, showToast) {
   // api/analyze-place-image.js 서버 함수(Vercel Functions)를 실제로 호출합니다.
   // 로컬에서 그냥 npm run dev로 돌리면 이 서버 함수가 없어서 요청이 실패하는데,
   // 그런 경우에는 자동으로 mock 데이터로 대체해서 화면 흐름은 계속 테스트할 수 있게 해뒀어요.
@@ -242,6 +242,10 @@ async function extractPlaceInfo(item, index) {
   // 사진 여러 장을 올린 경우, 한 식당의 서로 다른 사진(간판/메뉴판/내부 등)으로 보고
   // 전부 한 번에 같이 분석해서 하나의 결과로 합쳐 받습니다.
   const photoFiles = item?.type === "photos" ? item.photos.map((p) => p.file) : item?.file ? [item.file] : [];
+  const notify = (msg) => {
+    console.warn(msg);
+    if (showToast) showToast(msg);
+  };
 
   if (photoFiles.length > 0) {
     try {
@@ -260,13 +264,13 @@ async function extractPlaceInfo(item, index) {
       if (res.ok) {
         const data = await res.json();
         if (data && !data.error) return data;
-        console.warn("이미지 분석 API가 에러를 반환해서 mock 데이터로 대체합니다:", data?.error);
+        notify(`[AI분석 실패] ${data?.error || "알 수 없는 오류"} → 임시 데이터로 대체`);
       } else {
         const errBody = await res.json().catch(() => ({}));
-        console.warn(`이미지 분석 API 응답 실패(status ${res.status}), mock 데이터로 대체합니다:`, errBody?.error || "(응답 본문 없음)");
+        notify(`[AI분석 실패] 상태코드 ${res.status}: ${errBody?.error || "(응답 본문 없음)"} → 임시 데이터로 대체`);
       }
     } catch (err) {
-      console.warn("이미지 분석 API 호출 실패(로컬 개발 중이면 정상입니다), mock 데이터로 대체합니다:", err);
+      notify(`[AI분석 실패] ${err.message || err} → 임시 데이터로 대체`);
     }
   }
 
@@ -3590,7 +3594,7 @@ function UploadTab({ showToast, showConfirm, onLogout }) {
             onDone={async () => {
               const results = await Promise.all(
                 selectedItems.map(async (item, i) => {
-                  const extracted = await extractPlaceInfo(item, i);
+                  const extracted = await extractPlaceInfo(item, i, showToast);
                   const previewUrl = item.url || item.photos?.[0]?.url || null;
                   return { ...extracted, url: previewUrl };
                 })
@@ -4302,7 +4306,9 @@ export default function PlacePickApp() {
   const showToast = (message) => {
     setToast(message);
     window.clearTimeout(showToast._t);
-    showToast._t = window.setTimeout(() => setToast(null), 2000);
+    // 메시지가 길면(에러 메시지 등) 다 읽을 시간을 더 줌
+    const duration = message && message.length > 25 ? 6000 : 2000;
+    showToast._t = window.setTimeout(() => setToast(null), duration);
   };
   const showConfirm = (dialog) => {
     setConfirmDialog({
